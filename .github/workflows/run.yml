@@ -18,7 +18,7 @@ jobs:
           python-version: '3.9'
 
       - name: Install dependencies
-        run: pip install requests akshare
+        run: pip install --upgrade requests akshare
 
       - name: Run fund analysis
         env:
