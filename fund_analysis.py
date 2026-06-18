@@ -88,18 +88,21 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         )
 
     prompt = f"""
-    你是基金投资顾问。根据我的持仓数据，给出简明分析和建议：
-    {chr(10).join(lines)}
-    总资产：{total:.2f}
+你是我的专属基金投资顾问。我的投资偏好是：**{investment_style}**（例如：稳健型、激进型），投资期限为**{time_horizon}**年。
+我的持仓如下：
+{funds_text}
+总资产：{total_text}
 
-    请回答：
-    1. 整体评价我的持仓结构
-    2. 对每只基金的操作建议（加仓/减仓/持有）
-    3. 风险提示
+请根据以上信息，提供**非常详细、可操作**的建议，要求：
+1. 对每只基金分别评价，指出优点和缺点。
+2. 给出明确的加减仓建议，包括具体份额或比例（如“加仓500份”或“减仓30%”）。
+3. 设定明确的止损价位和止盈目标价。
+4. 结合当前市场环境（可参考近期A股走势），分析整体风险。
+5. 回答要具体、数字量化，避免模糊的形容词。
 
-    控制字数在 250 字以内。
-    """
-
+当前日期：{datetime.now().strftime('%Y-%m-%d')}
+"""
+    
     url = "https://api.deepseek.com/chat/completions"
     headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
     payload = {
