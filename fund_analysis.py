@@ -70,9 +70,65 @@ def get_fund_nav_eastmoney(code):
     return None
 
 def analyze_with_deepseek(fund_data_list, portfolio):
-    """调用 DeepSeek 分析（带详细操作建议）"""
+    """调用 DeepSeek 分析（带超时重试）"""
     if not DEEPSEEK_API_KEY:
         return "⚠️ 未设置 DeepSeek API Key"
+
+    # 构建持仓详情文本（精简版，减少 token 消耗）
+    lines = []
+    total = 0
+    for item in fund_data_list:
+        code = item['code']
+        nav = item['nav']
+        shares = portfolio[code]['shares']
+        cost = portfolio[code]['cost']
+        market = nav * shares
+        profit = (nav - cost) * shares
+        rate = (nav / cost - 1) * 100 if cost > 0 else 0
+        total += market
+        lines.append(
+            f"{code}: 持有{shares}份，成本{cost:.4f}，现价{nav:.4f}，"
+            f"盈亏{profit:+.2f} ({rate:+.2f}%)"
+        )
+    funds_text = "；".join(lines)
+    total_text = f"{total:.2f}"
+
+    # 精简 prompt，只保留核心指令
+    prompt = f"""
+你是基金顾问。我的风格：{INVESTMENT_STYLE}，期限{TIME_HORIZON}年。
+持仓：{funds_text}。总资产：{total_text}。
+请给出详细操作建议：
+1. 逐基金评价（优缺点）
+2. 具体加减仓份额或比例
+3. 止损价和止盈目标价
+4. 调整后的目标仓位比例
+5. 风险应对策略
+要求量化、具体，避免模糊词。
+日期：{datetime.now().strftime('%Y-%m-%d')}
+"""
+
+    url = "https://api.deepseek.com/chat/completions"
+    headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
+    payload = {
+        "model": "deepseek-v4-flash",
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 800,  # 限制输出长度，加快响应
+        "temperature": 0.7
+    }
+
+    # 重试机制：最多尝试2次，每次超时60秒
+    for attempt in range(2):
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp.raise_for_status()
+            return resp.json()['choices'][0]['message']['content']
+        except requests.exceptions.Timeout:
+            print(f"⏱️ DeepSeek 请求超时 (尝试 {attempt+1}/2)，正在重试...")
+            if attempt == 1:
+                return "⚠️ DeepSeek API 两次超时，请稍后重试。"
+            continue
+        except Exception as e:
+            return f"⚠️ AI分析失败: {e}"
 
     # 构建持仓详情文本
     lines = []
