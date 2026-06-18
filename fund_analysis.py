@@ -6,8 +6,12 @@ from datetime import datetime
 # ========== 用户配置区域 ==========
 # 持仓信息：{'基金代码': {'shares': 持有份额, 'cost': 成本单价}}
 PORTFOLIO = {
-    '021778': {'shares': 1000, 'cost': 1.0},
-    '005693': {'shares': 500,  'cost': 1.2},
+    '021778': {'shares': 213, 'cost': 8.4396},
+    '005693': {'shares': 4252,  'cost': 1.176},
+    '022460': {'shares': 13794,  'cost': 1.305},
+    '011613': {'shares': 1606,  'cost': 1.432},
+    '012857': {'shares': 651,  'cost': 1.767},
+    '007467': {'shares': 623,  'cost': 1.602},
 }
 FUND_LIST = list(PORTFOLIO.keys())
 
