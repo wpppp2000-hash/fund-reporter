@@ -70,11 +70,11 @@ def get_fund_nav_eastmoney(code):
     return None
 
 def analyze_with_deepseek(fund_data_list, portfolio):
-    """调用 DeepSeek 分析"""
+    """调用 DeepSeek 分析（带详细日志和空值检查）"""
     if not DEEPSEEK_API_KEY:
         return "⚠️ 未设置 DeepSeek API Key"
 
-    # ----- 在这里构建所有需要的变量 -----
+    # 构建持仓详情
     lines = []
     total = 0
     for item in fund_data_list:
@@ -90,12 +90,69 @@ def analyze_with_deepseek(fund_data_list, portfolio):
             f"- {code}: 持有{shares}份，成本{cost:.4f}，现价{nav:.4f}，"
             f"市值{market:.2f}，盈亏{profit:+.2f} ({rate:+.2f}%)"
         )
-    # 关键：必须定义这三个变量
-    funds_text = "\n".join(lines)        # 持仓详情文本
-    total_text = f"{total:.2f}"          # 总资产文本
-    investment_style = INVESTMENT_STYLE  # 从顶部配置读取
-    time_horizon = TIME_HORIZON          # 从顶部配置读取
-    # ------------------------------------
+    funds_text = "\n".join(lines)
+    total_text = f"{total:.2f}"
+    investment_style = INVESTMENT_STYLE
+    time_horizon = TIME_HORIZON
+
+    prompt = f"""
+你是我的专属基金投资顾问。我的投资偏好是：**{investment_style}**，投资期限为**{time_horizon}**年。
+我的持仓如下：
+{funds_text}
+总资产：{total_text}
+
+请根据以上信息，提供**非常详细、可操作**的建议，要求：
+1. 对每只基金分别评价，指出优点和缺点。
+2. 给出明确的加减仓建议，包括具体份额或比例（如"加仓500份"或"减仓30%"）。
+3. 设定明确的止损价位和止盈目标价。
+4. 结合当前市场环境（可参考近期A股走势），分析整体风险。
+5. 回答要具体、数字量化，避免模糊的形容词。
+
+当前日期：{datetime.now().strftime('%Y-%m-%d')}
+"""
+
+    url = "https://api.deepseek.com/chat/completions"
+    headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
+    payload = {
+        "model": "deepseek-v4-flash",
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 1000,   # 适当增加输出长度
+        "temperature": 0.7
+    }
+
+    for attempt in range(2):
+        try:
+            print(f"🧠 正在请求 DeepSeek API (尝试 {attempt+1}/2)...")
+            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            print(f"📡 HTTP 状态码: {resp.status_code}")
+            if resp.status_code != 200:
+                print(f"❌ 请求失败，响应内容: {resp.text[:200]}")
+                return f"⚠️ API 返回错误 {resp.status_code}: {resp.text[:100]}"
+            result = resp.json()
+            # 检查返回结构
+            if 'choices' not in result or not result['choices']:
+                print(f"❌ API 响应格式异常: {result}")
+                return "⚠️ API 响应格式异常，未找到 choices 字段"
+            content = result['choices'][0].get('message', {}).get('content', '')
+            if not content or content.strip() == '':
+                print("⚠️ API 返回了空内容")
+                # 尝试从 finish_reason 获取更多信息
+                finish_reason = result['choices'][0].get('finish_reason')
+                if finish_reason == 'length':
+                    return "⚠️ 分析内容过长被截断，请减少持仓数量或调整提示词"
+                else:
+                    return "⚠️ AI 返回了空内容，请稍后重试"
+            print(f"✅ 分析成功，内容长度: {len(content)} 字符")
+            return content
+        except requests.exceptions.Timeout:
+            print(f"⏱️ DeepSeek 超时 (尝试 {attempt+1}/2)")
+            if attempt == 1:
+                return "⚠️ DeepSeek API 两次超时，请稍后重试。"
+            continue
+        except Exception as e:
+            print(f"❌ 请求异常: {e}")
+            return f"⚠️ AI分析失败: {e}"
+    return "⚠️ 未知错误"
 
     prompt = f"""
 你是我的专属基金投资顾问。我的投资偏好是：**{investment_style}**，投资期限为**{time_horizon}**年。
