@@ -4,15 +4,12 @@ import re
 from datetime import datetime
 
 # ========== 用户配置区域 ==========
-# 投资偏好
 INVESTMENT_STYLE = "进取型（最大可承受10-20%回撤）"
 TIME_HORIZON = 3
 
-# 仓位配置
 BASE_FUND = '022460'
 SATELLITE_FUNDS = ['005693', '011613', '021778']
 
-# 持仓信息
 PORTFOLIO = {
     '021778': {'shares': 213, 'cost': 8.4396},
     '005693': {'shares': 4252, 'cost': 1.176},
@@ -23,9 +20,9 @@ PORTFOLIO = {
 }
 FUND_LIST = list(PORTFOLIO.keys())
 
-# 密钥
 DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
 FEISHU_WEBHOOK = os.environ.get('FEISHU_WEBHOOK')
+SERPER_API_KEY = os.environ.get('SERPER_API_KEY')   # 新增
 # ==================================
 
 def get_fund_name(code):
@@ -86,10 +83,53 @@ def get_position_type(code):
         return "【卫星仓】"
     return ""
 
+# ========== 新增：联网搜索函数 ==========
+def search_news(query, api_key):
+    """使用 Serper 搜索新闻，返回摘要文本"""
+    if not api_key:
+        return "未配置 Serper API Key，无法获取实时新闻。"
+
+    url = "https://google.serper.dev/news"  # 专门用于新闻的端点
+    headers = {
+        "X-API-KEY": api_key,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "q": query,
+        "num": 5  # 获取前 5 条新闻
+    }
+
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=15)
+        if resp.status_code != 200:
+            return f"搜索失败，HTTP {resp.status_code}"
+
+        data = resp.json()
+        news_items = data.get('news', [])
+        if not news_items:
+            return "未找到相关新闻。"
+
+        news_lines = []
+        for idx, item in enumerate(news_items[:5], 1):
+            title = item.get('title', '')
+            snippet = item.get('snippet', '')
+            link = item.get('link', '')
+            # 截断过长的摘要
+            if len(snippet) > 150:
+                snippet = snippet[:150] + "..."
+            news_lines.append(f"{idx}. {title}\n   {snippet}\n   链接: {link}")
+
+        return "\n\n".join(news_lines)
+
+    except Exception as e:
+        return f"搜索异常: {str(e)}"
+# ========================================
+
 def analyze_with_deepseek(fund_data_list, portfolio):
     if not DEEPSEEK_API_KEY:
         return "⚠️ 未设置 DeepSeek API Key"
 
+    # 构建持仓详情
     lines = []
     total = 0
     for item in fund_data_list:
@@ -117,8 +157,22 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 - 其他普通仓：按常规逻辑分析，止损线-10%
 """
 
+    # ========== 获取实时新闻 ==========
+    today = datetime.now().strftime('%Y-%m-%d')
+    news_query = f"A股 热点 板块 资金流向 {today}"
+    print("🔍 正在搜索今日市场动态...")
+    news_text = search_news(news_query, SERPER_API_KEY)
+    if "未配置" in news_text or "失败" in news_text:
+        print(f"⚠️ {news_text}")
+    else:
+        print("✅ 新闻获取成功")
+    # =================================
+
     prompt = f"""
-你是一位纵横华尔街三十年的投资大师，曾亲历多次牛熊转换，既深谙巴菲特的价值投资哲学，也精通索罗斯的反射性理论。
+你是一位纵横华尔街三十年的投资大师，既深谙巴菲特的价值投资哲学，也精通索罗斯的反射性理论。
+
+【今日实时市场动态】（来自 Google 搜索）
+{news_text}
 
 【今日任务】分为两部分：
 
@@ -136,25 +190,19 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 3. 对每只基金给出具体操作指令（加仓/减仓/持有 + 具体份额或比例）
 4. 设定清晰的止损价和止盈目标价
 
-## 第二部分：市场机会发现（请务必联网搜索最新信息）
-请搜索今日（{datetime.now().strftime('%Y-%m-%d')}）的市场动态，包括：
-1. 涨幅居前的板块和ETF
-2. 重大政策利好
-3. 主力资金流向
-
-基于搜索到的信息，回答：
-1. **当前最值得关注的3个投资方向**（板块/主题）
-2. **对应的代表性基金**（名称+代码）
-3. **建议买入时机**（现在/回调后/分批建仓）
-4. **建议持有周期**（短线/中线/长线）
-5. **潜在风险提示**
+## 第二部分：市场机会发现（基于上面提供的实时新闻）
+请结合今日的新闻动态，回答：
+1. **热点捕捉**：当前市场最热的方向是什么？对应的代表性基金有哪些？
+2. **机会判断**：有哪些板块或主题值得现在关注？给出具体基金代码。
+3. **时机与策略**：建议买入时机（现在/回调后/分批建仓）、持有周期（短线/中线/长线）。
+4. **风险提示**：当前最大的不确定性是什么？
 
 【语言风格要求】
 - 第一人称"我"，口语化、有温度
 - 多用比喻和类比
 - 敢于亮出鲜明观点
 - 引用经典投资格言
-- 控制在1500字以内
+- 总字数控制在1500字以内
 
 当前日期：{datetime.now().strftime('%Y-%m-%d')}
 """
@@ -165,8 +213,8 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         "model": "deepseek-v4-flash",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 4000,
-        "temperature": 0.8,
-        "enable_search": True
+        "temperature": 0.8
+        # 删除了 enable_search，由 Serper 提供实时数据
     }
 
     for attempt in range(2):
