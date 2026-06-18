@@ -174,8 +174,8 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         "model": "deepseek-v4-flash",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 3000,
-        "temperature": 0.7
-        "enable_search": True   # <--- 就是这一行，开启联网搜索
+        "temperature": 0.7,
+        "enable_search": True   # 开启联网搜索，获取最新市场信息
     }
 
     for attempt in range(2):
