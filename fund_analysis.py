@@ -116,7 +116,7 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     payload = {
         "model": "deepseek-v4-flash",
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 1000,   # 适当增加输出长度
+        "max_tokens": 1000,
         "temperature": 0.7
     }
 
@@ -129,14 +129,12 @@ def analyze_with_deepseek(fund_data_list, portfolio):
                 print(f"❌ 请求失败，响应内容: {resp.text[:200]}")
                 return f"⚠️ API 返回错误 {resp.status_code}: {resp.text[:100]}"
             result = resp.json()
-            # 检查返回结构
             if 'choices' not in result or not result['choices']:
                 print(f"❌ API 响应格式异常: {result}")
                 return "⚠️ API 响应格式异常，未找到 choices 字段"
             content = result['choices'][0].get('message', {}).get('content', '')
             if not content or content.strip() == '':
                 print("⚠️ API 返回了空内容")
-                # 尝试从 finish_reason 获取更多信息
                 finish_reason = result['choices'][0].get('finish_reason')
                 if finish_reason == 'length':
                     return "⚠️ 分析内容过长被截断，请减少持仓数量或调整提示词"
@@ -153,45 +151,6 @@ def analyze_with_deepseek(fund_data_list, portfolio):
             print(f"❌ 请求异常: {e}")
             return f"⚠️ AI分析失败: {e}"
     return "⚠️ 未知错误"
-
-    prompt = f"""
-你是我的专属基金投资顾问。我的投资偏好是：**{investment_style}**，投资期限为**{time_horizon}**年。
-我的持仓如下：
-{funds_text}
-总资产：{total_text}
-
-请根据以上信息，提供**非常详细、可操作**的建议，要求：
-1. 对每只基金分别评价，指出优点和缺点。
-2. 给出明确的加减仓建议，包括具体份额或比例（如"加仓500份"或"减仓30%"）。
-3. 设定明确的止损价位和止盈目标价。
-4. 结合当前市场环境（可参考近期A股走势），分析整体风险。
-5. 回答要具体、数字量化，避免模糊的形容词。
-
-当前日期：{datetime.now().strftime('%Y-%m-%d')}
-"""
-
-    url = "https://api.deepseek.com/chat/completions"
-    headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
-    payload = {
-        "model": "deepseek-v4-flash",
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 800,
-        "temperature": 0.7
-    }
-
-    # 增加超时时间和重试
-    for attempt in range(2):
-        try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
-            resp.raise_for_status()
-            return resp.json()['choices'][0]['message']['content']
-        except requests.exceptions.Timeout:
-            print(f"⏱️ DeepSeek 超时 (尝试 {attempt+1}/2)，重试中...")
-            if attempt == 1:
-                return "⚠️ DeepSeek API 两次超时，请稍后重试。"
-            continue
-        except Exception as e:
-            return f"⚠️ AI分析失败: {e}"
 
 def send_to_feishu(message):
     if not FEISHU_WEBHOOK:
