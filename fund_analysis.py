@@ -103,21 +103,15 @@ def get_position_type(code):
     else:
         return ""
 
-def get_position_instruction(code):
-    """获取仓位类型的详细说明，用于prompt"""
-    if code == BASE_FUND:
-        return "这是底仓，长期持有，不建议大幅减仓，止损线应放宽至-15%~-20%。"
-    elif code in SATELLITE_FUNDS:
-        return "这是卫星仓，用于灵活配置和波段操作，可根据市场情况加减仓，止损线-8%~-10%。"
-    else:
-        return "这是普通仓，按正常逻辑分析，止损线-10%。"
-
 def analyze_with_deepseek(fund_data_list, portfolio):
-    """调用 DeepSeek 分析（带详细日志和空值检查）"""
+    """
+    调用 DeepSeek API，以投资大师（巴菲特/索罗斯/彼得·林奇综合风格）进行分析。
+    返回拟人化的投资建议。
+    """
     if not DEEPSEEK_API_KEY:
         return "⚠️ 未设置 DeepSeek API Key"
 
-    # 构建持仓详情（带基金名称和仓位标记）
+    # 构建持仓详情
     lines = []
     total = 0
     for item in fund_data_list:
@@ -148,34 +142,48 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 - 其他普通仓：按常规逻辑分析，止损线-10%。
 """
 
+    # ===================== 关键修改：大师风格的 prompt =====================
     prompt = f"""
-你是我的专属基金投资顾问。我的投资偏好是：**{investment_style}**，投资期限为**{time_horizon}**年。
-**特别注意：我能接受的最大回撤为10%-20%，请据此设定止损和仓位建议。**
+你是一位纵横华尔街三十年的投资大师，曾亲历多次牛熊转换，既深谙巴菲特的价值投资哲学，也精通索罗斯的反射性理论，更懂得彼得·林奇从生活中发现成长股的智慧。
+现在，你受邀为一位私人投资者（我）提供持仓诊断和操作建议。
 
-我的持仓如下：
+【我的投资画像】
+- 风险偏好：{investment_style}（可承受10-20%回撤）
+- 投资期限：{time_horizon}年
+- 仓位策略：{strategy_text}
+
+【当前持仓明细】
 {funds_text}
 总资产：{total_text}
 
-{strategy_text}
+【今日市场背景】（请结合近期A股走势，如科技、军工、消费等板块表现）
 
-请根据以上信息，提供**非常详细、可操作**的建议，要求：
-1. 对每只基金分别评价，指出优点和缺点。
-2. 给出明确的加减仓建议，包括具体份额或比例（如"加仓500份"或"减仓30%"）。
-3. 设定明确的止损价位和止盈目标价（**严格执行上述仓位策略**）。
-4. 结合当前市场环境（可参考近期A股走势），分析整体风险。
-5. 回答要具体、数字量化，避免模糊的形容词。
+请你以第一人称“我”的口吻，写一份**极具个人风格、见解独到、语气自信**的投资评述。要求：
+1. **开场白**：用一句经典投资格言或市场洞察引入（如“在别人恐惧时贪婪……”）。
+2. **逐一评价每只基金**：指出其本质（是“护城河”还是“周期性”），给出明确的定性判断（“这是好东西”或“这个需要警惕”）。
+3. **具体操作指令**：对每只基金明确说出“加仓”、“减仓”或“持有”，并给出具体份额/比例（例如“再买500份”或“卖掉三分之一”），同时设定清晰的止损价和止盈目标。
+4. **宏观风险提示**：结合当前宏观经济或地缘政治，指出潜在黑天鹅，并给出应对预案。
+5. **结尾**：用一句富有哲理的投资心得收尾，增强信任感。
 
+**语言风格要求**：
+- 口语化、有温度，像一位长者在对晚辈传授经验。
+- 多用比喻和类比（如“这只基金就像一艘坚固的军舰”）。
+- 敢于说“不”，敢于亮出鲜明观点。
+- 适当引用经典投资书籍或名人名言（但不要过度）。
+
+回答控制在800字以内，既要高屋建瓴，也要落到实处。
 当前日期：{datetime.now().strftime('%Y-%m-%d')}
 """
+    # =====================================================================
 
     url = "https://api.deepseek.com/chat/completions"
     headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
     payload = {
         "model": "deepseek-v4-flash",
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 3000,
-        "temperature": 0.7,
-        "enable_search": True   # 开启联网搜索，获取最新市场信息
+        "max_tokens": 4000,
+        "temperature": 0.8,      # 稍微提高温度，让语言更生动
+        "enable_search": True    # 联网获取最新市场信息
     }
 
     for attempt in range(2):
@@ -247,7 +255,7 @@ if __name__ == "__main__":
         exit(1)
 
     print(f"📊 成功获取 {len(valid_data)} 只基金数据")
-    print("🧠 正在调用 DeepSeek 分析...")
+    print("🧠 正在调用 DeepSeek 分析（大师风格）...")
     ai_analysis = analyze_with_deepseek(valid_data, PORTFOLIO)
 
     report = f"📈 **基金持仓日报 - {datetime.now().strftime('%Y-%m-%d')}**\n\n"
@@ -270,7 +278,7 @@ if __name__ == "__main__":
             f"  盈亏: {profit:+.2f} ({rate:+.2f}%)\n\n"
         )
     report += f"**总资产**: {total_value:.2f}\n\n"
-    report += f"**🤖 AI 分析**\n{ai_analysis}"
+    report += f"**🤖 投资大师评述**\n{ai_analysis}"
 
     print("📨 推送到飞书...")
     send_to_feishu(report)
