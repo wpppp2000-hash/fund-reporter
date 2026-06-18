@@ -7,22 +7,29 @@ from datetime import datetime
 INVESTMENT_STYLE = "进取型（最大可承受10-20%回撤）"
 TIME_HORIZON = 3
 
+# 仓位配置
 BASE_FUND = '022460'
 SATELLITE_FUNDS = ['005693', '011613', '021778']
 
+# 持仓信息：新增 type 字段
+# - 'normal': 普通基金（计算盈亏）
+# - 'money': 货币基金（只显示份额和费率，不计算盈亏）
 PORTFOLIO = {
-    '021778': {'shares': 213, 'cost': 8.4396},
-    '005693': {'shares': 4252, 'cost': 1.176},
-    '022460': {'shares': 13794, 'cost': 1.305},
-    '011613': {'shares': 1606, 'cost': 1.432},
-    '012857': {'shares': 651, 'cost': 1.767},
-    '007467': {'shares': 623, 'cost': 1.602},
+    '021778': {'shares': 213, 'cost': 8.4396, 'type': 'normal'},
+    '005693': {'shares': 4252, 'cost': 1.176, 'type': 'normal'},
+    '022460': {'shares': 13794, 'cost': 1.305, 'type': 'normal'},
+    '011613': {'shares': 1606, 'cost': 1.432, 'type': 'normal'},
+    '012857': {'shares': 651, 'cost': 1.767, 'type': 'normal'},
+    '007467': {'shares': 623, 'cost': 1.602, 'type': 'normal'},
+    # 示例：货币基金（假设你持有一支货币基金，代码和份额请自行替换）
+    # '004368': {'shares': 10000, 'fee_rate': 0.375, 'type': 'money'},  # 费率0.33%/年
 }
 FUND_LIST = list(PORTFOLIO.keys())
 
+# 密钥
 DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
 FEISHU_WEBHOOK = os.environ.get('FEISHU_WEBHOOK')
-SERPER_API_KEY = os.environ.get('SERPER_API_KEY')   # 新增
+SERPER_API_KEY = os.environ.get('SERPER_API_KEY')
 # ==================================
 
 def get_fund_name(code):
@@ -83,71 +90,75 @@ def get_position_type(code):
         return "【卫星仓】"
     return ""
 
-# ========== 新增：联网搜索函数 ==========
 def search_news(query, api_key):
-    """使用 Serper 搜索新闻，返回摘要文本"""
     if not api_key:
         return "未配置 Serper API Key，无法获取实时新闻。"
-
-    url = "https://google.serper.dev/news"  # 专门用于新闻的端点
-    headers = {
-        "X-API-KEY": api_key,
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "q": query,
-        "num": 5  # 获取前 5 条新闻
-    }
-
+    url = "https://google.serper.dev/news"
+    headers = {"X-API-KEY": api_key, "Content-Type": "application/json"}
+    payload = {"q": query, "num": 5}
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=15)
         if resp.status_code != 200:
             return f"搜索失败，HTTP {resp.status_code}"
-
         data = resp.json()
         news_items = data.get('news', [])
         if not news_items:
             return "未找到相关新闻。"
-
         news_lines = []
         for idx, item in enumerate(news_items[:5], 1):
             title = item.get('title', '')
             snippet = item.get('snippet', '')
             link = item.get('link', '')
-            # 截断过长的摘要
             if len(snippet) > 150:
                 snippet = snippet[:150] + "..."
             news_lines.append(f"{idx}. {title}\n   {snippet}\n   链接: {link}")
-
         return "\n\n".join(news_lines)
-
     except Exception as e:
         return f"搜索异常: {str(e)}"
-# ========================================
 
 def analyze_with_deepseek(fund_data_list, portfolio):
     if not DEEPSEEK_API_KEY:
         return "⚠️ 未设置 DeepSeek API Key"
 
-    # 构建持仓详情
+    # 构建持仓详情（区分普通基金和货币基金）
     lines = []
     total = 0
+    money_fund_lines = []  # 货币基金单独记录
+
     for item in fund_data_list:
         code = item['code']
         nav = item['nav']
-        shares = portfolio[code]['shares']
-        cost = portfolio[code]['cost']
+        config = portfolio[code]
+        shares = config['shares']
+        fund_type = config.get('type', 'normal')
+        name = get_fund_name(code)
+        pos_type = get_position_type(code)
+
+        if fund_type == 'money':
+            # 货币基金：不计算盈亏，只显示份额和费率
+            fee_rate = config.get('fee_rate', 0.0033)  # 默认0.33%/年
+            money_fund_lines.append(
+                f"- {code} {name} {pos_type} 【货币基金】: 持有{shares}份，"
+                f"费率{fee_rate*100:.2f}%/年（每日计提），净值恒为1.00"
+            )
+            continue
+
+        # 普通基金：正常计算
+        cost = config['cost']
         market = nav * shares
         profit = (nav - cost) * shares
         rate = (nav / cost - 1) * 100 if cost > 0 else 0
         total += market
-        name = get_fund_name(code)
-        pos_type = get_position_type(code)
         lines.append(
             f"- {code} {name} {pos_type}: 持有{shares}份，成本{cost:.4f}，现价{nav:.4f}，"
             f"市值{market:.2f}，盈亏{profit:+.2f} ({rate:+.2f}%)"
         )
+
+    # 合并普通基金和货币基金的描述
     funds_text = "\n".join(lines)
+    if money_fund_lines:
+        funds_text += "\n\n【货币基金】（不参与盈亏计算）：\n" + "\n".join(money_fund_lines)
+
     total_text = f"{total:.2f}"
 
     strategy_text = f"""
@@ -157,7 +168,6 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 - 其他普通仓：按常规逻辑分析，止损线-10%
 """
 
-    # ========== 获取实时新闻 ==========
     today = datetime.now().strftime('%Y-%m-%d')
     news_query = f"A股 热点 板块 资金流向 {today}"
     print("🔍 正在搜索今日市场动态...")
@@ -166,7 +176,6 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         print(f"⚠️ {news_text}")
     else:
         print("✅ 新闻获取成功")
-    # =================================
 
     prompt = f"""
 你是一位纵横华尔街三十年的投资大师，既深谙巴菲特的价值投资哲学，也精通索罗斯的反射性理论。
@@ -176,25 +185,27 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 
 【今日任务】分为两部分：
 
-## 第一部分：持仓诊断（请重点分析）
+## 第一部分：持仓诊断
 我的持仓如下：
 {funds_text}
-总资产：{total_text}
+总资产（不含货币基金）：{total_text}
 {strategy_text}
 风险偏好：{INVESTMENT_STYLE}
 投资期限：{TIME_HORIZON}年
 
+说明：我持有的货币基金不参与盈亏计算，其净值恒为1.00，只有每日计提的持有费率。
+
 请以第一人称对现有持仓进行评述：
-1. 逐一评价每只基金的本质（护城河/周期性/成长性）
-2. 给出明确的定性判断（"这是好东西"或"这个需要警惕"）
-3. 对每只基金给出具体操作指令（加仓/减仓/持有 + 具体份额或比例）
+1. 对每只普通基金逐一评价（护城河/周期性/成长性）
+2. 对货币基金：评价其在组合中的“压舱石”作用，以及当前费率是否合理
+3. 给出具体操作指令（加仓/减仓/持有 + 具体份额或比例）
 4. 设定清晰的止损价和止盈目标价
 
-## 第二部分：市场机会发现（基于上面提供的实时新闻）
+## 第二部分：市场机会发现（基于上面的实时新闻）
 请结合今日的新闻动态，回答：
 1. **热点捕捉**：当前市场最热的方向是什么？对应的代表性基金有哪些？
 2. **机会判断**：有哪些板块或主题值得现在关注？给出具体基金代码。
-3. **时机与策略**：建议买入时机（现在/回调后/分批建仓）、持有周期（短线/中线/长线）。
+3. **时机与策略**：建议买入时机（现在/回调后/分批建仓）、持有周期。
 4. **风险提示**：当前最大的不确定性是什么？
 
 【语言风格要求】
@@ -212,9 +223,8 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     payload = {
         "model": "deepseek-v4-flash",
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 4000,
+        "max_tokens": 3000,
         "temperature": 0.8
-        # 删除了 enable_search，由 Serper 提供实时数据
     }
 
     for attempt in range(2):
@@ -281,21 +291,34 @@ if __name__ == "__main__":
     for item in valid_data:
         code = item['code']
         nav = item['nav']
-        shares = PORTFOLIO[code]['shares']
-        cost = PORTFOLIO[code]['cost']
-        market = nav * shares
-        profit = (nav - cost) * shares
-        rate = (nav / cost - 1) * 100 if cost > 0 else 0
-        total_value += market
+        config = PORTFOLIO[code]
+        shares = config['shares']
+        fund_type = config.get('type', 'normal')
         name = get_fund_name(code)
         pos_type = get_position_type(code)
-        report += (
-            f"**{code} {name} {pos_type}**\n"
-            f"  持有: {shares} 份\n"
-            f"  成本: {cost:.4f} → 现价: {nav:.4f}\n"
-            f"  盈亏: {profit:+.2f} ({rate:+.2f}%)\n\n"
-        )
-    report += f"**总资产**: {total_value:.2f}\n\n"
+
+        if fund_type == 'money':
+            fee_rate = config.get('fee_rate', 0.0033)
+            report += (
+                f"**{code} {name} {pos_type} 【货币基金】**\n"
+                f"  持有: {shares} 份\n"
+                f"  费率: {fee_rate*100:.2f}%/年（每日计提）\n"
+                f"  净值恒为: 1.00\n\n"
+            )
+        else:
+            cost = config['cost']
+            market = nav * shares
+            profit = (nav - cost) * shares
+            rate = (nav / cost - 1) * 100 if cost > 0 else 0
+            total_value += market
+            report += (
+                f"**{code} {name} {pos_type}**\n"
+                f"  持有: {shares} 份\n"
+                f"  成本: {cost:.4f} → 现价: {nav:.4f}\n"
+                f"  盈亏: {profit:+.2f} ({rate:+.2f}%)\n\n"
+            )
+
+    report += f"**总资产（不含货币基金）**: {total_value:.2f}\n\n"
     report += f"**🤖 投资大师评述**\n{ai_analysis}"
 
     send_to_feishu(report)
