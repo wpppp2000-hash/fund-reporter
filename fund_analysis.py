@@ -175,6 +175,7 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 3000,
         "temperature": 0.7
+        "enable_search": True   # <--- 就是这一行，开启联网搜索
     }
 
     for attempt in range(2):
