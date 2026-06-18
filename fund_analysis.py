@@ -95,12 +95,10 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     investment_style = INVESTMENT_STYLE
     time_horizon = TIME_HORIZON
 
-    prompt = f"""
-prompt = f"""
+        prompt = f"""
 你是我的专属基金投资顾问。我的投资偏好是：**{investment_style}**，投资期限为**{time_horizon}**年。
 **特别注意：我能接受的最大回撤为10%-20%，请据此设定止损和仓位建议。**
-...
-"""
+
 我的持仓如下：
 {funds_text}
 总资产：{total_text}
