@@ -5,7 +5,7 @@ from datetime import datetime
 
 # ========== 用户配置区域 ==========
 # 投资偏好（影响AI建议风格）
-INVESTMENT_STYLE = "进取型（最大可承受10-20%回撤）"   # 可选：稳健型、平衡型、激进型
+INVESTMENT_STYLE = "进取型（最大可承受10-20%回撤）"
 TIME_HORIZON = 3             # 投资期限（年）
 
 # 持仓信息：{'基金代码': {'shares': 持有份额, 'cost': 成本单价}}
@@ -95,7 +95,7 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     investment_style = INVESTMENT_STYLE
     time_horizon = TIME_HORIZON
 
-        prompt = f"""
+    prompt = f"""
 你是我的专属基金投资顾问。我的投资偏好是：**{investment_style}**，投资期限为**{time_horizon}**年。
 **特别注意：我能接受的最大回撤为10%-20%，请据此设定止损和仓位建议。**
 
