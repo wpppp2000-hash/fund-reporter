@@ -8,6 +8,11 @@ from datetime import datetime
 INVESTMENT_STYLE = "进取型（最大可承受10-20%回撤）"
 TIME_HORIZON = 3             # 投资期限（年）
 
+# 仓位配置
+BASE_FUND = '022460'                      # 底仓（核心资产，长期持有）
+SATELLITE_FUNDS = ['005693', '011613', '021778']    # 卫星仓（灵活配置，波段操作）
+# 未标记的基金为普通仓
+
 # 持仓信息：{'基金代码': {'shares': 持有份额, 'cost': 成本单价}}
 PORTFOLIO = {
     '021778': {'shares': 213, 'cost': 8.4396},
@@ -32,19 +37,17 @@ def get_fund_name(code):
         resp = requests.get(url, headers=headers, timeout=10)
         resp.encoding = "utf-8"
         html = resp.text
-        # 匹配基金名称（东方财富页面标题格式）
         match = re.search(r'<title>(.*?)基金净值', html)
         if match:
             name = match.group(1).strip()
             return name
-        # 备用匹配
         match = re.search(r'<h1 class="fundName">(.*?)</h1>', html)
         if match:
             name = match.group(1).strip()
             return name
     except Exception as e:
         print(f"⚠️ 获取基金名称 {code} 失败: {e}")
-    return code  # 如果获取失败，返回代码本身
+    return code
 
 def get_fund_nav_sina(code):
     """从新浪财经获取基金净值"""
@@ -91,12 +94,30 @@ def get_fund_nav_eastmoney(code):
         print(f"⚠️ 东方财富获取 {code} 失败: {e}")
     return None
 
+def get_position_type(code):
+    """获取基金仓位类型标记"""
+    if code == BASE_FUND:
+        return "【底仓】"
+    elif code in SATELLITE_FUNDS:
+        return "【卫星仓】"
+    else:
+        return ""
+
+def get_position_instruction(code):
+    """获取仓位类型的详细说明，用于prompt"""
+    if code == BASE_FUND:
+        return "这是底仓，长期持有，不建议大幅减仓，止损线应放宽至-15%~-20%。"
+    elif code in SATELLITE_FUNDS:
+        return "这是卫星仓，用于灵活配置和波段操作，可根据市场情况加减仓，止损线-8%~-10%。"
+    else:
+        return "这是普通仓，按正常逻辑分析，止损线-10%。"
+
 def analyze_with_deepseek(fund_data_list, portfolio):
     """调用 DeepSeek 分析（带详细日志和空值检查）"""
     if not DEEPSEEK_API_KEY:
         return "⚠️ 未设置 DeepSeek API Key"
 
-    # 构建持仓详情（带基金名称）
+    # 构建持仓详情（带基金名称和仓位标记）
     lines = []
     total = 0
     for item in fund_data_list:
@@ -108,16 +129,24 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         profit = (nav - cost) * shares
         rate = (nav / cost - 1) * 100 if cost > 0 else 0
         total += market
-        # 获取基金名称
         name = get_fund_name(code)
+        pos_type = get_position_type(code)
         lines.append(
-            f"- {code} {name}: 持有{shares}份，成本{cost:.4f}，现价{nav:.4f}，"
+            f"- {code} {name} {pos_type}: 持有{shares}份，成本{cost:.4f}，现价{nav:.4f}，"
             f"市值{market:.2f}，盈亏{profit:+.2f} ({rate:+.2f}%)"
         )
     funds_text = "\n".join(lines)
     total_text = f"{total:.2f}"
     investment_style = INVESTMENT_STYLE
     time_horizon = TIME_HORIZON
+
+    # 构建仓位策略说明
+    strategy_text = f"""
+【仓位策略】
+- 底仓（{BASE_FUND}）：核心资产，长期持有，不减仓，止损线-20%。
+- 卫星仓（{', '.join(SATELLITE_FUNDS)}）：灵活配置，波段操作，止损线-10%。
+- 其他普通仓：按常规逻辑分析，止损线-10%。
+"""
 
     prompt = f"""
 你是我的专属基金投资顾问。我的投资偏好是：**{investment_style}**，投资期限为**{time_horizon}**年。
@@ -127,10 +156,12 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 {funds_text}
 总资产：{total_text}
 
+{strategy_text}
+
 请根据以上信息，提供**非常详细、可操作**的建议，要求：
 1. 对每只基金分别评价，指出优点和缺点。
 2. 给出明确的加减仓建议，包括具体份额或比例（如"加仓500份"或"减仓30%"）。
-3. 设定明确的止损价位和止盈目标价。
+3. 设定明确的止损价位和止盈目标价（**严格执行上述仓位策略**）。
 4. 结合当前市场环境（可参考近期A股走势），分析整体风险。
 5. 回答要具体、数字量化，避免模糊的形容词。
 
@@ -142,7 +173,7 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     payload = {
         "model": "deepseek-v4-flash",
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 3000,
+        "max_tokens": 2000,
         "temperature": 0.7
     }
 
@@ -229,9 +260,10 @@ if __name__ == "__main__":
         profit = (nav - cost) * shares
         rate = (nav / cost - 1) * 100 if cost > 0 else 0
         total_value += market
-        name = get_fund_name(code)  # 获取名称用于报告
+        name = get_fund_name(code)
+        pos_type = get_position_type(code)
         report += (
-            f"**{code} {name}**\n"
+            f"**{code} {name} {pos_type}**\n"
             f"  持有: {shares} 份\n"
             f"  成本: {cost:.4f} → 现价: {nav:.4f}\n"
             f"  盈亏: {profit:+.2f} ({rate:+.2f}%)\n\n"
