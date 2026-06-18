@@ -25,7 +25,7 @@ FEISHU_WEBHOOK = os.environ.get('FEISHU_WEBHOOK')
 # ==================================
 
 def get_fund_nav_sina(code):
-    """从新浪财经获取基金净值（推荐）"""
+    """从新浪财经获取基金净值"""
     try:
         url = f"https://hq.sinajs.cn/list=f_{code}"
         headers = {
@@ -70,11 +70,11 @@ def get_fund_nav_eastmoney(code):
     return None
 
 def analyze_with_deepseek(fund_data_list, portfolio):
-    """调用 DeepSeek 分析（带超时重试）"""
+    """调用 DeepSeek 分析"""
     if not DEEPSEEK_API_KEY:
         return "⚠️ 未设置 DeepSeek API Key"
 
-    # 构建持仓详情文本（精简版，减少 token 消耗）
+    # ----- 在这里构建所有需要的变量 -----
     lines = []
     total = 0
     for item in fund_data_list:
@@ -87,88 +87,29 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         rate = (nav / cost - 1) * 100 if cost > 0 else 0
         total += market
         lines.append(
-            f"{code}: 持有{shares}份，成本{cost:.4f}，现价{nav:.4f}，"
-            f"盈亏{profit:+.2f} ({rate:+.2f}%)"
-        )
-    funds_text = "；".join(lines)
-    total_text = f"{total:.2f}"
-
-    # 精简 prompt，只保留核心指令
-    prompt = f"""
-你是基金顾问。我的风格：{INVESTMENT_STYLE}，期限{TIME_HORIZON}年。
-持仓：{funds_text}。总资产：{total_text}。
-请给出详细操作建议：
-1. 逐基金评价（优缺点）
-2. 具体加减仓份额或比例
-3. 止损价和止盈目标价
-4. 调整后的目标仓位比例
-5. 风险应对策略
-要求量化、具体，避免模糊词。
-日期：{datetime.now().strftime('%Y-%m-%d')}
-"""
-
-    url = "https://api.deepseek.com/chat/completions"
-    headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
-    payload = {
-        "model": "deepseek-v4-flash",
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 800,  # 限制输出长度，加快响应
-        "temperature": 0.7
-    }
-
-    # 重试机制：最多尝试2次，每次超时60秒
-    for attempt in range(2):
-        try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
-            resp.raise_for_status()
-            return resp.json()['choices'][0]['message']['content']
-        except requests.exceptions.Timeout:
-            print(f"⏱️ DeepSeek 请求超时 (尝试 {attempt+1}/2)，正在重试...")
-            if attempt == 1:
-                return "⚠️ DeepSeek API 两次超时，请稍后重试。"
-            continue
-        except Exception as e:
-            return f"⚠️ AI分析失败: {e}"
-
-    # 构建持仓详情文本
-    lines = []
-    total = 0
-    for item in fund_data_list:
-        code = item['code']
-        nav = item['nav']
-        shares = portfolio[code]['shares']
-        cost = portfolio[code]['cost']
-        market = nav * shares
-        profit = (nav - cost) * shares
-        rate = (nav / cost - 1) * 100 if cost > 0 else 0
-        total += market
-        lines.append(
-            f"基金 {code}: 持有{shares}份，成本{cost:.4f}，现价{nav:.4f}，"
+            f"- {code}: 持有{shares}份，成本{cost:.4f}，现价{nav:.4f}，"
             f"市值{market:.2f}，盈亏{profit:+.2f} ({rate:+.2f}%)"
         )
-    funds_text = "\n".join(lines)
-    total_text = f"{total:.2f}"
+    # 关键：必须定义这三个变量
+    funds_text = "\n".join(lines)        # 持仓详情文本
+    total_text = f"{total:.2f}"          # 总资产文本
+    investment_style = INVESTMENT_STYLE  # 从顶部配置读取
+    time_horizon = TIME_HORIZON          # 从顶部配置读取
+    # ------------------------------------
 
-    # 构建详细的提示词（使用顶部的投资偏好配置）
     prompt = f"""
-你是我的专属基金投资顾问。我的投资风格是：**{INVESTMENT_STYLE}**，投资期限为 **{TIME_HORIZON} 年**。
-
-【持仓明细】
+你是我的专属基金投资顾问。我的投资偏好是：**{investment_style}**，投资期限为**{time_horizon}**年。
+我的持仓如下：
 {funds_text}
-
 总资产：{total_text}
 
-请根据以上信息，提供**极其详细、可操作**的投资建议，要求如下：
+请根据以上信息，提供**非常详细、可操作**的建议，要求：
+1. 对每只基金分别评价，指出优点和缺点。
+2. 给出明确的加减仓建议，包括具体份额或比例（如"加仓500份"或"减仓30%"）。
+3. 设定明确的止损价位和止盈目标价。
+4. 结合当前市场环境（可参考近期A股走势），分析整体风险。
+5. 回答要具体、数字量化，避免模糊的形容词。
 
-1. **整体评价**：评价我的持仓结构是否合理（分散度、风险暴露、行业集中度等）。
-2. **逐基金分析**：对每只基金分别点评优点和缺点。
-3. **具体操作建议**：
-   - 对每只基金给出明确的加减仓建议，包括具体份额或比例（如“加仓500份”或“减仓30%”）。
-   - 设定明确的止损价位和止盈目标价（如“跌破1.50元止损，涨到2.00元减仓一半”）。
-4. **资产配置调整**：建议调整后各基金的目标仓位比例（总和100%），并估算调整后的总资产。
-5. **风险提示**：结合当前市场环境，指出主要风险，并给出应对策略（如“每跌5%加仓一次”）。
-
-回答必须**量化、具体**，避免“适当调整”、“关注走势”等模糊词语。
 当前日期：{datetime.now().strftime('%Y-%m-%d')}
 """
 
@@ -176,14 +117,24 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
     payload = {
         "model": "deepseek-v4-flash",
-        "messages": [{"role": "user", "content": prompt}]
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 800,
+        "temperature": 0.7
     }
-    try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=30)
-        resp.raise_for_status()
-        return resp.json()['choices'][0]['message']['content']
-    except Exception as e:
-        return f"⚠️ AI分析失败: {e}"
+
+    # 增加超时时间和重试
+    for attempt in range(2):
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=60)
+            resp.raise_for_status()
+            return resp.json()['choices'][0]['message']['content']
+        except requests.exceptions.Timeout:
+            print(f"⏱️ DeepSeek 超时 (尝试 {attempt+1}/2)，重试中...")
+            if attempt == 1:
+                return "⚠️ DeepSeek API 两次超时，请稍后重试。"
+            continue
+        except Exception as e:
+            return f"⚠️ AI分析失败: {e}"
 
 def send_to_feishu(message):
     if not FEISHU_WEBHOOK:
@@ -225,7 +176,6 @@ if __name__ == "__main__":
     print("🧠 正在调用 DeepSeek 分析...")
     ai_analysis = analyze_with_deepseek(valid_data, PORTFOLIO)
 
-    # 构建飞书报告
     report = f"📈 **基金持仓日报 - {datetime.now().strftime('%Y-%m-%d')}**\n\n"
     total_value = 0
     for item in valid_data:
