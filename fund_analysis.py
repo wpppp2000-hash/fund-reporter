@@ -24,6 +24,28 @@ DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
 FEISHU_WEBHOOK = os.environ.get('FEISHU_WEBHOOK')
 # ==================================
 
+def get_fund_name(code):
+    """从东方财富获取基金名称"""
+    try:
+        url = f"https://fund.eastmoney.com/{code}.html"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.encoding = "utf-8"
+        html = resp.text
+        # 匹配基金名称（东方财富页面标题格式）
+        match = re.search(r'<title>(.*?)基金净值', html)
+        if match:
+            name = match.group(1).strip()
+            return name
+        # 备用匹配
+        match = re.search(r'<h1 class="fundName">(.*?)</h1>', html)
+        if match:
+            name = match.group(1).strip()
+            return name
+    except Exception as e:
+        print(f"⚠️ 获取基金名称 {code} 失败: {e}")
+    return code  # 如果获取失败，返回代码本身
+
 def get_fund_nav_sina(code):
     """从新浪财经获取基金净值"""
     try:
@@ -74,7 +96,7 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     if not DEEPSEEK_API_KEY:
         return "⚠️ 未设置 DeepSeek API Key"
 
-    # 构建持仓详情
+    # 构建持仓详情（带基金名称）
     lines = []
     total = 0
     for item in fund_data_list:
@@ -86,8 +108,10 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         profit = (nav - cost) * shares
         rate = (nav / cost - 1) * 100 if cost > 0 else 0
         total += market
+        # 获取基金名称
+        name = get_fund_name(code)
         lines.append(
-            f"- {code}: 持有{shares}份，成本{cost:.4f}，现价{nav:.4f}，"
+            f"- {code} {name}: 持有{shares}份，成本{cost:.4f}，现价{nav:.4f}，"
             f"市值{market:.2f}，盈亏{profit:+.2f} ({rate:+.2f}%)"
         )
     funds_text = "\n".join(lines)
@@ -205,8 +229,9 @@ if __name__ == "__main__":
         profit = (nav - cost) * shares
         rate = (nav / cost - 1) * 100 if cost > 0 else 0
         total_value += market
+        name = get_fund_name(code)  # 获取名称用于报告
         report += (
-            f"**{code}**\n"
+            f"**{code} {name}**\n"
             f"  持有: {shares} 份\n"
             f"  成本: {cost:.4f} → 现价: {nav:.4f}\n"
             f"  盈亏: {profit:+.2f} ({rate:+.2f}%)\n\n"
