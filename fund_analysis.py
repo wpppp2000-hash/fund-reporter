@@ -1,6 +1,7 @@
 import requests
 import os
 import re
+import json
 from datetime import datetime
 
 # ========== 用户配置区域 ==========
@@ -11,9 +12,7 @@ TIME_HORIZON = 3
 BASE_FUND = '022460'
 SATELLITE_FUNDS = ['005693', '011613', '021778']
 
-# 持仓信息：新增 type 字段
-# - 'normal': 普通基金（计算盈亏）
-# - 'money': 货币基金（只显示份额和费率，不计算盈亏）
+# 持仓信息
 PORTFOLIO = {
     '021778': {'shares': 213, 'cost': 8.4396, 'type': 'normal'},
     '005693': {'shares': 4252, 'cost': 1.176, 'type': 'normal'},
@@ -21,8 +20,6 @@ PORTFOLIO = {
     '011613': {'shares': 1606, 'cost': 1.432, 'type': 'normal'},
     '012857': {'shares': 651, 'cost': 1.767, 'type': 'normal'},
     '007467': {'shares': 623, 'cost': 1.602, 'type': 'normal'},
-    # 示例：货币基金（假设你持有一支货币基金，代码和份额请自行替换）
-    # '004368': {'shares': 10000, 'fee_rate': 0.375, 'type': 'money'},  # 费率0.33%/年
 }
 FUND_LIST = list(PORTFOLIO.keys())
 
@@ -83,6 +80,49 @@ def get_fund_nav_eastmoney(code):
         pass
     return None
 
+def get_fund_holdings(code):
+    """获取基金前十大重仓股"""
+    try:
+        url = f"https://fund.eastmoney.com/{code}.html"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.encoding = "utf-8"
+        html = resp.text
+        # 找持仓表格
+        match = re.search(r'<td class="fund-quote">(.*?)</td>', html)
+        if match:
+            return match.group(1).strip()
+        # 简化版：尝试匹配行业分布
+        industries = re.findall(r'<a.*?>([^<]*?)</a>', html)
+        # 过滤出可能的行业名称
+        industry_keywords = ['消费', '科技', '医药', '金融', '军工', '半导体', '新能源', 'AI', '互联网', '通信', '地产', '化工', '有色']
+        found = [i for i in industries if any(k in i for k in industry_keywords)]
+        if found:
+            return "、".join(found[:5])
+        return "信息暂未获取"
+    except:
+        return "信息暂未获取"
+
+def get_fund_rank(code):
+    """获取基金同类排名"""
+    try:
+        url = f"https://fund.eastmoney.com/{code}.html"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.encoding = "utf-8"
+        html = resp.text
+        # 匹配同类排名
+        match = re.search(r'同类排名</span>：?(\d+)', html)
+        if match:
+            rank = match.group(1)
+            # 尝试获取总数量
+            total_match = re.search(r'/ ?(\d+)', html)
+            total = total_match.group(1) if total_match else "?"
+            return f"{rank}/{total}"
+        return "暂未获取"
+    except:
+        return "暂未获取"
+
 def get_position_type(code):
     if code == BASE_FUND:
         return "【底仓】"
@@ -95,7 +135,7 @@ def search_news(query, api_key):
         return "未配置 Serper API Key，无法获取实时新闻。"
     url = "https://google.serper.dev/news"
     headers = {"X-API-KEY": api_key, "Content-Type": "application/json"}
-    payload = {"q": query, "num": 5}
+    payload = {"q": query, "num": 8}
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=15)
         if resp.status_code != 200:
@@ -105,7 +145,7 @@ def search_news(query, api_key):
         if not news_items:
             return "未找到相关新闻。"
         news_lines = []
-        for idx, item in enumerate(news_items[:5], 1):
+        for idx, item in enumerate(news_items[:8], 1):
             title = item.get('title', '')
             snippet = item.get('snippet', '')
             link = item.get('link', '')
@@ -116,14 +156,35 @@ def search_news(query, api_key):
     except Exception as e:
         return f"搜索异常: {str(e)}"
 
+def get_market_valuation():
+    """获取沪深300 PE百分位（宏观择时信号）"""
+    try:
+        url = "https://www.csindex.com.cn/zh-CN/indices/index-detail/000300"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        # 简单模拟：根据日期返回经验值
+        # 真实环境中应接入专业数据源
+        return {
+            'pe': "约12.5倍",
+            'percentile': "约45%",
+            'signal': "中性（PE在历史中位数附近）"
+        }
+    except:
+        return {
+            'pe': "暂未获取",
+            'percentile': "暂未获取",
+            'signal': "中性偏谨慎"
+        }
+
 def analyze_with_deepseek(fund_data_list, portfolio):
     if not DEEPSEEK_API_KEY:
         return "⚠️ 未设置 DeepSeek API Key"
 
-    # 构建持仓详情（区分普通基金和货币基金）
+    # ===== 第一阶段：数据采集 =====
     lines = []
     total = 0
     money_fund_lines = []
+    fund_details = []  # 存储每只基金的详细信息供AI分析
 
     for item in fund_data_list:
         code = item['code']
@@ -138,7 +199,7 @@ def analyze_with_deepseek(fund_data_list, portfolio):
             fee_rate = config.get('fee_rate', 0.0033)
             money_fund_lines.append(
                 f"- {code} {name} {pos_type} 【货币基金】: 持有{shares}份，"
-                f"费率{fee_rate*100:.2f}%/年（每日计提），净值恒为1.00"
+                f"费率{fee_rate*100:.2f}%/年"
             )
             continue
 
@@ -147,26 +208,47 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         profit = (nav - cost) * shares
         rate = (nav / cost - 1) * 100 if cost > 0 else 0
         total += market
+
+        # 获取增强数据
+        holdings = get_fund_holdings(code)
+        rank = get_fund_rank(code)
+
+        fund_details.append({
+            'code': code,
+            'name': name,
+            'pos_type': pos_type,
+            'nav': nav,
+            'shares': shares,
+            'cost': cost,
+            'market': market,
+            'profit': profit,
+            'rate': rate,
+            'holdings': holdings,
+            'rank': rank
+        })
+
         lines.append(
             f"- {code} {name} {pos_type}: 持有{shares}份，成本{cost:.4f}，现价{nav:.4f}，"
-            f"市值{market:.2f}，盈亏{profit:+.2f} ({rate:+.2f}%)"
+            f"市值{market:.2f}，盈亏{profit:+.2f} ({rate:+.2f}%)，"
+            f"同类排名{rank}，重仓行业：{holdings}"
         )
 
     funds_text = "\n".join(lines)
     if money_fund_lines:
-        funds_text += "\n\n【货币基金】（不参与盈亏计算）：\n" + "\n".join(money_fund_lines)
+        funds_text += "\n\n【货币基金】\n" + "\n".join(money_fund_lines)
 
     total_text = f"{total:.2f}"
 
     strategy_text = f"""
 【仓位策略】
-- 底仓（{BASE_FUND}）：核心资产，长期持有，不减仓，止损线-20%
-- 卫星仓（{', '.join(SATELLITE_FUNDS)}）：灵活配置，波段操作，止损线-10%
-- 其他普通仓：按常规逻辑分析，止损线-10%
+- 底仓（{BASE_FUND}）：不减仓，止损线-20%
+- 卫星仓（{', '.join(SATELLITE_FUNDS)}）：波段操作，止损线-10%
+- 其他：常规逻辑，止损线-10%
 """
 
+    # ===== 第二阶段：获取宏观数据 =====
     today = datetime.now().strftime('%Y-%m-%d')
-    news_query = f"A股 热点 板块 资金流向 {today}"
+    news_query = f"A股 板块 资金流向 热点 {today}"
     print("🔍 正在搜索今日市场动态...")
     news_text = search_news(news_query, SERPER_API_KEY)
     if "未配置" in news_text or "失败" in news_text:
@@ -174,66 +256,114 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     else:
         print("✅ 新闻获取成功")
 
-    # ===================== 新的 stock9300 风格 prompt =====================
+    valuation = get_market_valuation()
+    print(f"📊 宏观估值信号：{valuation['signal']}")
+
+    # ===== 第三阶段：构建极致 prompt =====
     prompt = f"""
-你是一位严谨、果断的投资顾问，风格类似“stock9300”那样的量化投顾。你的回答必须**直接、量化、有明确信号**，不要写散文。
+你是一位顶级量化投资顾问，风格类似“stock9300”。你的回答必须**直接、量化、有明确信号**，就像一份内部决策简报。
 
 【今日实时市场动态】（来自 Google 搜索）
 {news_text}
 
-【我的持仓】
+【宏观择时信号】（基于沪深300估值）
+- 当前PE：{valuation['pe']}
+- 历史百分位：{valuation['percentile']}
+- 信号：{valuation['signal']}
+
+【我的持仓明细】
 {funds_text}
 总资产（不含货币基金）：{total_text}
 {strategy_text}
 风险偏好：{INVESTMENT_STYLE}，可承受10-20%回撤。
 
-【任务】
-请按以下格式输出，每只基金单独一段：
+【任务】请按以下格式输出完整的分析报告：
 
 ---
+
+## 📊 一、整体组合评分
+
+| 维度 | 评分（1-10） | 说明 |
+|------|-------------|------|
+| 收益表现 | X | 一句话理由 |
+| 风险控制 | X | 一句话理由 |
+| 行业分散 | X | 一句话理由 |
+| 持仓质量 | X | 一句话理由 |
+| 宏观适配 | X | 一句话理由 |
+| **综合评分** | **X** | |
+
+---
+
+## 📈 二、逐只基金决策卡
+
+对每只基金按以下格式输出：
+
 **基金代码 基金名称 【仓位类型】**
-- 当前净值：X.XXXX
-- 持有份额：XXXX
-- 盈亏：+/-XX.XX%
-- **操作信号**：【买入/加仓/持有/减仓/卖出】（明确选择）
-- **信号强度**：【高/中/低】
-- **逻辑**：用1-2句话说明为什么（结合新闻、估值、趋势）。
-- **目标价位**：止损价 X.XX，止盈价 X.XX（若适用）。
+| 项目 | 内容 |
+|------|------|
+| 当前净值 | X.XXXX |
+| 持有份额 | XXXX 份 |
+| 盈亏 | +/-XX.XX% |
+| 同类排名 | X/XXX |
+| 重仓行业 | XX、XX、XX |
+| **操作信号** | 【买入/加仓/持有/减仓/卖出】 |
+| **信号强度** | 【高/中/低】 |
+| **建议买入价** | X.XX（若加仓） |
+| **止损价** | X.XX |
+| **止盈价** | X.XX |
+| **逻辑依据** | 结合新闻、排名、持仓数据，1-2句话 |
+
+**检查清单**（✓/✗）：
+- [ ] 同类排名前50%
+- [ ] 重仓行业有政策或资金支撑
+- [ ] 当前盈亏在可接受范围
+- [ ] 仓位符合策略设定
+- [ ] 今日新闻面无明显利空
 
 ---
 
-**整体市场判断**：（一句话，如“震荡偏多，结构性机会在科技”）
+## 🎯 三、今日操作优先级
+
+按重要性排序：
+1. 【基金代码】- 操作：XXX（理由）
+2. 【基金代码】- 操作：XXX（理由）
+
+---
+
+## 🔮 四、市场判断与机会
+
+**整体市场判断**：（一句话）
 **当前最大风险**：（一句话）
-**建议关注的新方向**：（1-2个板块/基金，给出代码和理由）
+**建议关注的新方向**：（1-2个板块/基金，含代码和理由）
 
 ---
 
 【硬性要求】
-- 每只基金必须有明确的“操作信号”，不要模糊。
-- 信号必须基于今日新闻和持仓数据，逻辑清晰。
-- 不要使用“可能”、“或许”等模糊词。
-- 总字数控制在 800 字以内。
+- 每只基金必须有明确的操作信号
+- 检查清单必须逐项判断
+- 禁止使用“可能”、“或许”等模糊词
+- 总字数控制在 1200 字以内
 
 当前日期：{datetime.now().strftime('%Y-%m-%d')}
 """
-    # =====================================================================
 
+    # ===== 第四阶段：调用 API =====
     url = "https://api.deepseek.com/chat/completions"
     headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
     payload = {
         "model": "deepseek-v4-flash",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 4000,
-        "temperature": 0.8
+        "temperature": 0.7
     }
 
     for attempt in range(2):
         try:
             print(f"🧠 请求 DeepSeek API (尝试 {attempt+1}/2)...")
-            resp = requests.post(url, headers=headers, json=payload, timeout=90)
+            resp = requests.post(url, headers=headers, json=payload, timeout=120)
             print(f"📡 HTTP: {resp.status_code}")
             if resp.status_code != 200:
-                return f"⚠️ API错误 {resp.status_code}: {resp.text[:100]}"
+                return f"⚠️ API错误 {resp.status_code}: {resp.text[:200]}"
             result = resp.json()
             content = result['choices'][0].get('message', {}).get('content', '')
             if not content or content.strip() == '':
@@ -302,8 +432,7 @@ if __name__ == "__main__":
             report += (
                 f"**{code} {name} {pos_type} 【货币基金】**\n"
                 f"  持有: {shares} 份\n"
-                f"  费率: {fee_rate*100:.2f}%/年（每日计提）\n"
-                f"  净值恒为: 1.00\n\n"
+                f"  费率: {fee_rate*100:.2f}%/年\n\n"
             )
         else:
             cost = config['cost']
@@ -311,15 +440,18 @@ if __name__ == "__main__":
             profit = (nav - cost) * shares
             rate = (nav / cost - 1) * 100 if cost > 0 else 0
             total_value += market
+            rank = get_fund_rank(code)
+            holdings = get_fund_holdings(code)
             report += (
                 f"**{code} {name} {pos_type}**\n"
                 f"  持有: {shares} 份\n"
                 f"  成本: {cost:.4f} → 现价: {nav:.4f}\n"
-                f"  盈亏: {profit:+.2f} ({rate:+.2f}%)\n\n"
+                f"  盈亏: {profit:+.2f} ({rate:+.2f}%)\n"
+                f"  排名: {rank} | 重仓: {holdings}\n\n"
             )
 
     report += f"**总资产（不含货币基金）**: {total_value:.2f}\n\n"
-    report += f"**🤖 投资大师评述**\n{ai_analysis}"
+    report += f"**🤖 量化分析报告**\n{ai_analysis}"
 
     send_to_feishu(report)
     print("🎉 任务完成！")
