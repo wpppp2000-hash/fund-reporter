@@ -4,7 +4,7 @@ import re
 import json
 from datetime import datetime
 
-# ========== 全局变量（将在 load_portfolio 中初始化） ==========
+# ========== 全局变量 ==========
 INVESTMENT_STYLE = ""
 TIME_HORIZON = 3
 BASE_FUND = ""
@@ -12,15 +12,13 @@ SATELLITE_FUNDS = []
 PORTFOLIO = {}
 FUND_LIST = []
 
-# API 密钥（从环境变量读取）
 DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')       # 新增
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 FEISHU_WEBHOOK = os.environ.get('FEISHU_WEBHOOK')
 SERPER_API_KEY = os.environ.get('SERPER_API_KEY')
 # ==================================
 
 def load_portfolio():
-    """从 portfolio.json 加载配置"""
     global INVESTMENT_STYLE, TIME_HORIZON, BASE_FUND, SATELLITE_FUNDS, PORTFOLIO, FUND_LIST
     config_file = "portfolio.json"
     if not os.path.exists(config_file):
@@ -35,7 +33,7 @@ def load_portfolio():
     FUND_LIST = list(PORTFOLIO.keys())
     print(f"✅ 已加载 {len(FUND_LIST)} 只基金配置")
 
-# ========== 以下函数保持不变 ==========
+# ========== 辅助函数（保持不变） ==========
 def get_fund_name(code):
     try:
         url = f"http://fund.eastmoney.com/{code}.html"
@@ -167,12 +165,17 @@ def get_market_valuation():
     }
 
 def analyze_with_deepseek(fund_data_list, portfolio):
-    # 优先使用 Gemini，若未配置则回退到 DeepSeek
+    # 确定初始模型
+    use_gemini = False
+    api_key = None
+    url = None
+    model = None
+
     if GEMINI_API_KEY:
         use_gemini = True
         api_key = GEMINI_API_KEY
         url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-        model = "gemini-2.0-flash"  # 也可换 gemini-1.5-flash
+        model = "gemini-2.0-flash"
         print("🧠 使用 Gemini 模型")
     elif DEEPSEEK_API_KEY:
         use_gemini = False
@@ -183,7 +186,7 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     else:
         return "⚠️ 未设置任何 API Key (GEMINI_API_KEY 或 DEEPSEEK_API_KEY)"
 
-    # 构建持仓详情（保持不变）
+    # 构建持仓详情
     lines = []
     total = 0
     money_fund_lines = []
@@ -245,7 +248,6 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     valuation = get_market_valuation()
     print(f"📊 宏观估值信号：{valuation['signal']}，建议仓位：{valuation['suggested_position']}")
 
-    # ===== 提示词（与之前相同） =====
     prompt = f"""
 你是一位顶级量化投资顾问，回答必须**直接、量化、有明确信号**。
 
@@ -350,38 +352,55 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 当前日期：{datetime.now().strftime('%Y-%m-%d')}
 """
 
-    # ===== 调用 API =====
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 4000,
-        "temperature": 0.7
-    }
-    # Gemini 支持 reasoning_effort，可选添加
-    if use_gemini:
-        payload["reasoning_effort"] = "high"  # 启用深度思考
+    # ===== 请求函数 =====
+    def make_request(api_key, url, model, payload):
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        # Gemini 支持 reasoning_effort
+        if model.startswith("gemini"):
+            payload["reasoning_effort"] = "high"
+        resp = requests.post(url, headers=headers, json=payload, timeout=120)
+        return resp
 
-    for attempt in range(2):
+    # 尝试请求（支持回退）
+    for attempt in range(3):  # 最多尝试3次（包括回退）
         try:
-            print(f"🧠 请求 API (尝试 {attempt+1}/2)...")
-            resp = requests.post(url, headers=headers, json=payload, timeout=120)
+            print(f"🧠 请求 API (尝试 {attempt+1}/3)...")
+            resp = make_request(api_key, url, model, {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 4000,
+                "temperature": 0.7
+            })
             print(f"📡 HTTP: {resp.status_code}")
+
+            # 如果 Gemini 429 且 DeepSeek 可用，回退
+            if resp.status_code == 429 and use_gemini and DEEPSEEK_API_KEY:
+                print("⚠️ Gemini 配额用尽，自动回退到 DeepSeek...")
+                use_gemini = False
+                api_key = DEEPSEEK_API_KEY
+                url = "https://api.deepseek.com/chat/completions"
+                model = "deepseek-v4-pro"
+                # 重置 payload 中的 model
+                continue  # 重新尝试
+
             if resp.status_code != 200:
                 return f"⚠️ API错误 {resp.status_code}: {resp.text[:200]}"
+
             result = resp.json()
             content = result['choices'][0].get('message', {}).get('content', '')
             if not content or content.strip() == '':
                 return "⚠️ API返回空内容，请重试"
             print(f"✅ 分析成功，{len(content)}字符")
             return content
+
         except requests.exceptions.Timeout:
-            print(f"⏱️ 超时 (尝试 {attempt+1}/2)")
-            if attempt == 1:
-                return "⚠️ 两次超时，请稍后重试"
+            print(f"⏱️ 超时 (尝试 {attempt+1}/3)")
+            if attempt == 2:
+                return "⚠️ 三次超时，请稍后重试"
             continue
         except Exception as e:
             return f"⚠️ 分析失败: {e}"
+
     return "⚠️ 未知错误"
 
 def send_to_feishu(message):
@@ -399,7 +418,6 @@ def send_to_feishu(message):
 
 if __name__ == "__main__":
     load_portfolio()
-    
     print("🚀 开始获取基金数据...")
     print(f"📌 基金: {FUND_LIST}")
 
