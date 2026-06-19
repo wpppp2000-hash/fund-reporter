@@ -35,20 +35,49 @@ def load_portfolio():
 
 # ========== 辅助函数（保持不变） ==========
 def get_fund_name(code):
+    """从天天基金网获取基金名称（使用 API 接口，更稳定）"""
     try:
-        url = f"http://fund.eastmoney.com/{code}.html"
+        # 方法1：使用天天基金网的 JSONP 接口
+        url = f"https://fund.eastmoney.com/pingzhongdata/{code}.js"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.encoding = "utf-8"
+        if resp.status_code == 200:
+            # 解析 JS 文件中的基金名称
+            content = resp.text
+            # 匹配 var fName = "基金名称";
+            match = re.search(r'var fName\s*=\s*"([^"]+)"', content)
+            if match:
+                return match.group(1).strip()
+            # 匹配 var _fundName = "基金名称";
+            match = re.search(r'var _fundName\s*=\s*"([^"]+)"', content)
+            if match:
+                return match.group(1).strip()
+    except:
+        pass
+    
+    # 方法2：备选 - 解析 HTML 页面
+    try:
+        url = f"https://fund.eastmoney.com/{code}.html"
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(url, headers=headers, timeout=10)
         resp.encoding = "utf-8"
         html = resp.text
-        match = re.search(r'<title>(.*?)\(.*?\)</title>', html)
+        # 匹配 <title>基金名称(代码) 净值... </title>
+        match = re.search(r'<title>(.*?)\(', html)
         if match:
             return match.group(1).strip()
-        match = re.search(r'<div class="fundDetail-tit">\s*<h1>(.*?)</h1>', html)
+        # 匹配 h1 标签中的名称
+        match = re.search(r'<h1[^>]*>(.*?)</h1>', html)
         if match:
-            return match.group(1).strip()
+            name = match.group(1).strip()
+            # 清理可能包含的代码
+            name = re.sub(r'\(\d+\)', '', name).strip()
+            return name
     except:
         pass
+    
+    # 如果都失败，返回基金代码本身
     return code
 
 def get_fund_nav_sina(code):
