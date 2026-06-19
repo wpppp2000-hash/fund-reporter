@@ -123,7 +123,7 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     # 构建持仓详情（区分普通基金和货币基金）
     lines = []
     total = 0
-    money_fund_lines = []  # 货币基金单独记录
+    money_fund_lines = []
 
     for item in fund_data_list:
         code = item['code']
@@ -135,15 +135,13 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         pos_type = get_position_type(code)
 
         if fund_type == 'money':
-            # 货币基金：不计算盈亏，只显示份额和费率
-            fee_rate = config.get('fee_rate', 0.0033)  # 默认0.33%/年
+            fee_rate = config.get('fee_rate', 0.0033)
             money_fund_lines.append(
                 f"- {code} {name} {pos_type} 【货币基金】: 持有{shares}份，"
                 f"费率{fee_rate*100:.2f}%/年（每日计提），净值恒为1.00"
             )
             continue
 
-        # 普通基金：正常计算
         cost = config['cost']
         market = nav * shares
         profit = (nav - cost) * shares
@@ -154,7 +152,6 @@ def analyze_with_deepseek(fund_data_list, portfolio):
             f"市值{market:.2f}，盈亏{profit:+.2f} ({rate:+.2f}%)"
         )
 
-    # 合并普通基金和货币基金的描述
     funds_text = "\n".join(lines)
     if money_fund_lines:
         funds_text += "\n\n【货币基金】（不参与盈亏计算）：\n" + "\n".join(money_fund_lines)
@@ -177,46 +174,49 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     else:
         print("✅ 新闻获取成功")
 
+    # ===================== 新的 stock9300 风格 prompt =====================
     prompt = f"""
-你是一位纵横华尔街三十年的投资大师，既深谙巴菲特的价值投资哲学，也精通索罗斯的反射性理论。
+你是一位严谨、果断的投资顾问，风格类似“stock9300”那样的量化投顾。你的回答必须**直接、量化、有明确信号**，不要写散文。
 
 【今日实时市场动态】（来自 Google 搜索）
 {news_text}
 
-【今日任务】分为两部分：
-
-## 第一部分：持仓诊断
-我的持仓如下：
+【我的持仓】
 {funds_text}
 总资产（不含货币基金）：{total_text}
 {strategy_text}
-风险偏好：{INVESTMENT_STYLE}
-投资期限：{TIME_HORIZON}年
+风险偏好：{INVESTMENT_STYLE}，可承受10-20%回撤。
 
-说明：我持有的货币基金不参与盈亏计算，其净值恒为1.00，只有每日计提的持有费率。
+【任务】
+请按以下格式输出，每只基金单独一段：
 
-请以第一人称对现有持仓进行评述：
-1. 对每只普通基金逐一评价（护城河/周期性/成长性）
-2. 对货币基金：评价其在组合中的“压舱石”作用，以及当前费率是否合理
-3. 给出具体操作指令（加仓/减仓/持有 + 具体份额或比例）
-4. 设定清晰的止损价和止盈目标价
+---
+**基金代码 基金名称 【仓位类型】**
+- 当前净值：X.XXXX
+- 持有份额：XXXX
+- 盈亏：+/-XX.XX%
+- **操作信号**：【买入/加仓/持有/减仓/卖出】（明确选择）
+- **信号强度**：【高/中/低】
+- **逻辑**：用1-2句话说明为什么（结合新闻、估值、趋势）。
+- **目标价位**：止损价 X.XX，止盈价 X.XX（若适用）。
 
-## 第二部分：市场机会发现（基于上面的实时新闻）
-请结合今日的新闻动态，回答：
-1. **热点捕捉**：当前市场最热的方向是什么？对应的代表性基金有哪些？
-2. **机会判断**：有哪些板块或主题值得现在关注？给出具体基金代码。
-3. **时机与策略**：建议买入时机（现在/回调后/分批建仓）、持有周期。
-4. **风险提示**：当前最大的不确定性是什么？
+---
 
-【语言风格要求】
-- 第一人称"我"，口语化、有温度
-- 多用比喻和类比
-- 敢于亮出鲜明观点
-- 引用经典投资格言
-- 总字数控制在1500字以内
+**整体市场判断**：（一句话，如“震荡偏多，结构性机会在科技”）
+**当前最大风险**：（一句话）
+**建议关注的新方向**：（1-2个板块/基金，给出代码和理由）
+
+---
+
+【硬性要求】
+- 每只基金必须有明确的“操作信号”，不要模糊。
+- 信号必须基于今日新闻和持仓数据，逻辑清晰。
+- 不要使用“可能”、“或许”等模糊词。
+- 总字数控制在 800 字以内。
 
 当前日期：{datetime.now().strftime('%Y-%m-%d')}
 """
+    # =====================================================================
 
     url = "https://api.deepseek.com/chat/completions"
     headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
