@@ -223,7 +223,7 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     payload = {
         "model": "deepseek-v4-flash",
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 3000,
+        "max_tokens": 4000,
         "temperature": 0.8
     }
 
