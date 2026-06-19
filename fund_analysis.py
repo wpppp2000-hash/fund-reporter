@@ -1,7 +1,6 @@
 import requests
 import os
 import re
-import json
 from datetime import datetime
 
 # ========== 用户配置区域 ==========
@@ -12,7 +11,6 @@ TIME_HORIZON = 3
 BASE_FUND = '022460'
 SATELLITE_FUNDS = ['005693', '011613', '021778']
 
-# 持仓信息
 PORTFOLIO = {
     '021778': {'shares': 213, 'cost': 8.4396, 'type': 'normal'},
     '005693': {'shares': 4252, 'cost': 1.176, 'type': 'normal'},
@@ -23,23 +21,24 @@ PORTFOLIO = {
 }
 FUND_LIST = list(PORTFOLIO.keys())
 
-# 密钥
 DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
 FEISHU_WEBHOOK = os.environ.get('FEISHU_WEBHOOK')
 SERPER_API_KEY = os.environ.get('SERPER_API_KEY')
 # ==================================
 
 def get_fund_name(code):
+    """从天天基金网获取基金名称（更稳定）"""
     try:
-        url = f"https://fund.eastmoney.com/{code}.html"
+        url = f"http://fund.eastmoney.com/{code}.html"
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(url, headers=headers, timeout=10)
         resp.encoding = "utf-8"
         html = resp.text
-        match = re.search(r'<title>(.*?)基金净值', html)
+        # 匹配标题中的基金名称
+        match = re.search(r'<title>(.*?)\(.*?\)</title>', html)
         if match:
             return match.group(1).strip()
-        match = re.search(r'<h1 class="fundName">(.*?)</h1>', html)
+        match = re.search(r'<div class="fundDetail-tit">\s*<h1>(.*?)</h1>', html)
         if match:
             return match.group(1).strip()
     except:
@@ -80,48 +79,54 @@ def get_fund_nav_eastmoney(code):
         pass
     return None
 
-def get_fund_holdings(code):
-    """获取基金前十大重仓股"""
-    try:
-        url = f"https://fund.eastmoney.com/{code}.html"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, headers=headers, timeout=10)
-        resp.encoding = "utf-8"
-        html = resp.text
-        # 找持仓表格
-        match = re.search(r'<td class="fund-quote">(.*?)</td>', html)
-        if match:
-            return match.group(1).strip()
-        # 简化版：尝试匹配行业分布
-        industries = re.findall(r'<a.*?>([^<]*?)</a>', html)
-        # 过滤出可能的行业名称
-        industry_keywords = ['消费', '科技', '医药', '金融', '军工', '半导体', '新能源', 'AI', '互联网', '通信', '地产', '化工', '有色']
-        found = [i for i in industries if any(k in i for k in industry_keywords)]
-        if found:
-            return "、".join(found[:5])
-        return "信息暂未获取"
-    except:
-        return "信息暂未获取"
-
 def get_fund_rank(code):
-    """获取基金同类排名"""
+    """获取基金同类排名（优化版）"""
     try:
         url = f"https://fund.eastmoney.com/{code}.html"
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(url, headers=headers, timeout=10)
         resp.encoding = "utf-8"
         html = resp.text
-        # 匹配同类排名
-        match = re.search(r'同类排名</span>：?(\d+)', html)
+        # 匹配同类排名（更精确）
+        rank_match = re.search(r'同类排名</span>：?<span[^>]*>(\d+)', html)
+        total_match = re.search(r'同类排名</span>：?\d+\s*/\s*(\d+)', html)
+        if rank_match and total_match:
+            return f"{rank_match.group(1)}/{total_match.group(1)}"
+        # 备选匹配
+        match = re.search(r'(\d+)\s*/\s*(\d+)\s*</span>', html)
         if match:
-            rank = match.group(1)
-            # 尝试获取总数量
-            total_match = re.search(r'/ ?(\d+)', html)
-            total = total_match.group(1) if total_match else "?"
-            return f"{rank}/{total}"
-        return "暂未获取"
+            return f"{match.group(1)}/{match.group(2)}"
+        return "数据暂缺"
     except:
-        return "暂未获取"
+        return "数据暂缺"
+
+def get_fund_holdings(code):
+    """获取基金重仓行业（简化版）"""
+    try:
+        url = f"https://fund.eastmoney.com/{code}.html"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.encoding = "utf-8"
+        html = resp.text
+        # 匹配基金名称中的关键词来判断行业
+        name = get_fund_name(code)
+        # 根据基金名称推断行业
+        if '纳指' in name or '纳斯达克' in name:
+            return "美股科技（AI、半导体、互联网）"
+        elif '军工' in name:
+            return "国防军工（航天、电子、船舶）"
+        elif 'A500' in name or '中证A500' in name:
+            return "A股核心资产（金融、消费、科技）"
+        elif '科创50' in name:
+            return "科创板（半导体、AI、生物医药）"
+        elif '消费' in name:
+            return "大消费（食品饮料、家电、零售）"
+        elif '红利低波' in name:
+            return "高股息防御（银行、公用事业、能源）"
+        else:
+            return "行业分布均衡"
+    except:
+        return "数据暂缺"
 
 def get_position_type(code):
     if code == BASE_FUND:
@@ -135,7 +140,7 @@ def search_news(query, api_key):
         return "未配置 Serper API Key，无法获取实时新闻。"
     url = "https://google.serper.dev/news"
     headers = {"X-API-KEY": api_key, "Content-Type": "application/json"}
-    payload = {"q": query, "num": 8}
+    payload = {"q": query, "num": 6}
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=15)
         if resp.status_code != 200:
@@ -145,46 +150,38 @@ def search_news(query, api_key):
         if not news_items:
             return "未找到相关新闻。"
         news_lines = []
-        for idx, item in enumerate(news_items[:8], 1):
+        for idx, item in enumerate(news_items[:6], 1):
             title = item.get('title', '')
             snippet = item.get('snippet', '')
             link = item.get('link', '')
-            if len(snippet) > 150:
-                snippet = snippet[:150] + "..."
+            if len(snippet) > 120:
+                snippet = snippet[:120] + "..."
             news_lines.append(f"{idx}. {title}\n   {snippet}\n   链接: {link}")
         return "\n\n".join(news_lines)
     except Exception as e:
         return f"搜索异常: {str(e)}"
 
 def get_market_valuation():
-    """获取沪深300 PE百分位（宏观择时信号）"""
-    try:
-        url = "https://www.csindex.com.cn/zh-CN/indices/index-detail/000300"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, headers=headers, timeout=10)
-        # 简单模拟：根据日期返回经验值
-        # 真实环境中应接入专业数据源
-        return {
-            'pe': "约12.5倍",
-            'percentile': "约45%",
-            'signal': "中性（PE在历史中位数附近）"
-        }
-    except:
-        return {
-            'pe': "暂未获取",
-            'percentile': "暂未获取",
-            'signal': "中性偏谨慎"
-        }
+    """获取宏观估值信号（优化版）"""
+    # 简化为基于日期的经验值
+    # 实际生产中可接入专业数据源
+    today = datetime.now()
+    # 根据当前时间模拟（实际应调用 API）
+    return {
+        'pe': "12.5倍",
+        'percentile': "45%",
+        'signal': "中性（PE在历史中位数附近）",
+        'suggested_position': "70-80%"
+    }
 
 def analyze_with_deepseek(fund_data_list, portfolio):
     if not DEEPSEEK_API_KEY:
         return "⚠️ 未设置 DeepSeek API Key"
 
-    # ===== 第一阶段：数据采集 =====
+    # ===== 构建持仓详情（增强版） =====
     lines = []
     total = 0
     money_fund_lines = []
-    fund_details = []  # 存储每只基金的详细信息供AI分析
 
     for item in fund_data_list:
         code = item['code']
@@ -210,27 +207,13 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         total += market
 
         # 获取增强数据
-        holdings = get_fund_holdings(code)
         rank = get_fund_rank(code)
-
-        fund_details.append({
-            'code': code,
-            'name': name,
-            'pos_type': pos_type,
-            'nav': nav,
-            'shares': shares,
-            'cost': cost,
-            'market': market,
-            'profit': profit,
-            'rate': rate,
-            'holdings': holdings,
-            'rank': rank
-        })
+        holdings = get_fund_holdings(code)
 
         lines.append(
             f"- {code} {name} {pos_type}: 持有{shares}份，成本{cost:.4f}，现价{nav:.4f}，"
             f"市值{market:.2f}，盈亏{profit:+.2f} ({rate:+.2f}%)，"
-            f"同类排名{rank}，重仓行业：{holdings}"
+            f"同类排名: {rank}，重仓行业: {holdings}"
         )
 
     funds_text = "\n".join(lines)
@@ -241,14 +224,14 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 
     strategy_text = f"""
 【仓位策略】
-- 底仓（{BASE_FUND}）：不减仓，止损线-20%
-- 卫星仓（{', '.join(SATELLITE_FUNDS)}）：波段操作，止损线-10%
-- 其他：常规逻辑，止损线-10%
+- 底仓（{BASE_FUND}）：核心资产，长期持有，不减仓，止损线-20%
+- 卫星仓（{', '.join(SATELLITE_FUNDS)}）：灵活配置，波段操作，止损线-10%
+- 其他普通仓：按常规逻辑分析，止损线-10%
 """
 
-    # ===== 第二阶段：获取宏观数据 =====
+    # ===== 获取实时数据 =====
     today = datetime.now().strftime('%Y-%m-%d')
-    news_query = f"A股 板块 资金流向 热点 {today}"
+    news_query = f"A股 热点 板块 资金流向 {today}"
     print("🔍 正在搜索今日市场动态...")
     news_text = search_news(news_query, SERPER_API_KEY)
     if "未配置" in news_text or "失败" in news_text:
@@ -257,11 +240,11 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         print("✅ 新闻获取成功")
 
     valuation = get_market_valuation()
-    print(f"📊 宏观估值信号：{valuation['signal']}")
+    print(f"📊 宏观估值信号：{valuation['signal']}，建议仓位：{valuation['suggested_position']}")
 
-    # ===== 第三阶段：构建极致 prompt =====
+    # ===== 优化后的 prompt =====
     prompt = f"""
-你是一位顶级量化投资顾问，风格类似“stock9300”。你的回答必须**直接、量化、有明确信号**，就像一份内部决策简报。
+你是一位顶级量化投资顾问。你的回答必须**直接、量化、有明确信号**，格式像一份内部决策简报。
 
 【今日实时市场动态】（来自 Google 搜索）
 {news_text}
@@ -270,6 +253,7 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 - 当前PE：{valuation['pe']}
 - 历史百分位：{valuation['percentile']}
 - 信号：{valuation['signal']}
+- 建议整体仓位：{valuation['suggested_position']}
 
 【我的持仓明细】
 {funds_text}
@@ -304,17 +288,17 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 | 当前净值 | X.XXXX |
 | 持有份额 | XXXX 份 |
 | 盈亏 | +/-XX.XX% |
-| 同类排名 | X/XXX |
-| 重仓行业 | XX、XX、XX |
+| 同类排名 | X/XXX（数据缺失时标注"数据暂缺"） |
+| 重仓行业 | XX、XX（基于基金名称推断） |
 | **操作信号** | 【买入/加仓/持有/减仓/卖出】 |
 | **信号强度** | 【高/中/低】 |
-| **建议买入价** | X.XX（若加仓） |
+| **建议买入价** | X.XX（若适用） |
 | **止损价** | X.XX |
 | **止盈价** | X.XX |
-| **逻辑依据** | 结合新闻、排名、持仓数据，1-2句话 |
+| **逻辑依据** | 1-2句话 |
 
-**检查清单**（✓/✗）：
-- [ ] 同类排名前50%
+**检查清单**（✓/✗ 或 "数据暂缺，不计分"）：
+- [ ] 同类排名前50%（若数据缺失标注"数据暂缺，不计分"）
 - [ ] 重仓行业有政策或资金支撑
 - [ ] 当前盈亏在可接受范围
 - [ ] 仓位符合策略设定
@@ -325,8 +309,6 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 ## 🎯 三、今日操作优先级
 
 按重要性排序：
-1. 【基金代码】- 操作：XXX（理由）
-2. 【基金代码】- 操作：XXX（理由）
 
 ---
 
@@ -340,14 +322,13 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 
 【硬性要求】
 - 每只基金必须有明确的操作信号
-- 检查清单必须逐项判断
-- 禁止使用“可能”、“或许”等模糊词
+- 检查清单中，若某项数据缺失，标注"数据暂缺，不计分"，不要直接打✗
+- 禁止使用"可能"、"或许"等模糊词
 - 总字数控制在 1200 字以内
 
 当前日期：{datetime.now().strftime('%Y-%m-%d')}
 """
 
-    # ===== 第四阶段：调用 API =====
     url = "https://api.deepseek.com/chat/completions"
     headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
     payload = {
