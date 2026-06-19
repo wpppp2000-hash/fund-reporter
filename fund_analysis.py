@@ -1,33 +1,40 @@
 import requests
 import os
 import re
+import json
 from datetime import datetime
 
-# ========== 用户配置区域 ==========
-INVESTMENT_STYLE = "进取型（最大可承受10-20%回撤）"
+# ========== 全局变量（将在 load_portfolio 中初始化） ==========
+INVESTMENT_STYLE = ""
 TIME_HORIZON = 3
-
-# 仓位配置
-BASE_FUND = '022460'
-SATELLITE_FUNDS = ['005693', '011613', '021778']
-
-PORTFOLIO = {
-    '021778': {'shares': 213, 'cost': 8.4396, 'type': 'normal'},
-    '005693': {'shares': 4252, 'cost': 1.176, 'type': 'normal'},
-    '022460': {'shares': 13794, 'cost': 1.305, 'type': 'normal'},
-    '011613': {'shares': 1606, 'cost': 1.432, 'type': 'normal'},
-    '012857': {'shares': 651, 'cost': 1.767, 'type': 'normal'},
-    '007467': {'shares': 623, 'cost': 1.602, 'type': 'normal'},
-}
-FUND_LIST = list(PORTFOLIO.keys())
+BASE_FUND = ""
+SATELLITE_FUNDS = []
+PORTFOLIO = {}
+FUND_LIST = []
 
 DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
 FEISHU_WEBHOOK = os.environ.get('FEISHU_WEBHOOK')
 SERPER_API_KEY = os.environ.get('SERPER_API_KEY')
 # ==================================
 
+def load_portfolio():
+    """从 portfolio.json 加载配置"""
+    global INVESTMENT_STYLE, TIME_HORIZON, BASE_FUND, SATELLITE_FUNDS, PORTFOLIO, FUND_LIST
+    config_file = "portfolio.json"
+    if not os.path.exists(config_file):
+        raise FileNotFoundError(f"配置文件 {config_file} 不存在，请先创建！")
+    with open(config_file, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    INVESTMENT_STYLE = config.get("investment_style", "进取型（最大可承受10-20%回撤）")
+    TIME_HORIZON = config.get("time_horizon", 3)
+    BASE_FUND = config.get("base_fund", "")
+    SATELLITE_FUNDS = config.get("satellite_funds", [])
+    PORTFOLIO = config.get("holdings", {})
+    FUND_LIST = list(PORTFOLIO.keys())
+    print(f"✅ 已加载 {len(FUND_LIST)} 只基金配置")
+
+# ========== 以下函数保持不变 ==========
 def get_fund_name(code):
-    """从天天基金网获取基金名称（更稳定）"""
     try:
         url = f"http://fund.eastmoney.com/{code}.html"
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -79,7 +86,6 @@ def get_fund_nav_eastmoney(code):
     return None
 
 def get_fund_rank(code):
-    """获取基金同类排名（优化版）"""
     try:
         url = f"https://fund.eastmoney.com/{code}.html"
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -98,7 +104,6 @@ def get_fund_rank(code):
         return "数据暂缺"
 
 def get_fund_holdings(code):
-    """获取基金重仓行业（简化版）"""
     try:
         name = get_fund_name(code)
         if '纳指' in name or '纳斯达克' in name:
@@ -152,8 +157,6 @@ def search_news(query, api_key):
         return f"搜索异常: {str(e)}"
 
 def get_market_valuation():
-    """获取宏观估值信号（优化版）"""
-    # 简化为基于日期的经验值，实际可接入专业数据源
     return {
         'pe': "12.5倍",
         'percentile': "45%",
@@ -165,7 +168,6 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     if not DEEPSEEK_API_KEY:
         return "⚠️ 未设置 DeepSeek API Key"
 
-    # ===== 构建持仓详情（增强版） =====
     lines = []
     total = 0
     money_fund_lines = []
@@ -215,7 +217,6 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 - 其他普通仓：按常规逻辑分析，止损线-10%
 """
 
-    # ===== 获取实时数据 =====
     today = datetime.now().strftime('%Y-%m-%d')
     news_query = f"A股 热点 板块 资金流向 {today}"
     print("🔍 正在搜索今日市场动态...")
@@ -228,7 +229,6 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     valuation = get_market_valuation()
     print(f"📊 宏观估值信号：{valuation['signal']}，建议仓位：{valuation['suggested_position']}")
 
-    # ===== 升级版 Prompt（硬核 + 新方向推荐深度优化） =====
     prompt = f"""
 你是一位顶级量化投资顾问，回答必须**直接、量化、有明确信号**。
 
@@ -372,6 +372,9 @@ def send_to_feishu(message):
         print(f"❌ 异常: {e}")
 
 if __name__ == "__main__":
+    # 加载配置
+    load_portfolio()
+    
     print("🚀 开始获取基金数据...")
     print(f"📌 基金: {FUND_LIST}")
 
