@@ -35,7 +35,7 @@ def load_portfolio():
 
 # ========== 辅助函数 ==========
 def get_fund_name(code):
-    """从天天基金网获取基金名称（使用 API 接口，更稳定）"""
+    """从天天基金网获取基金名称"""
     try:
         url = f"https://fund.eastmoney.com/pingzhongdata/{code}.js"
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -104,87 +104,6 @@ def get_fund_nav_eastmoney(code):
     except:
         pass
     return None
-
-# ========== 升级版 get_fund_rank ==========
-def get_fund_rank(code):
-    """获取基金同类排名（多方式尝试）"""
-    # 方式1：通过基金类型排行接口获取
-    try:
-        # 先获取基金类型
-        url_type = f"https://fund.eastmoney.com/{code}.html"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url_type, headers=headers, timeout=10)
-        resp.encoding = "utf-8"
-        html = resp.text
-        
-        # 获取基金类型代码
-        type_match = re.search(r'var ftype\s*=\s*"(\d+)"', html)
-        if not type_match:
-            type_match = re.search(r'ftype\s*=\s*"(\d+)"', html)
-        if not type_match:
-            # 如果没找到类型，跳过此方式
-            pass
-        else:
-            fund_type = type_match.group(1)
-            
-            # 通过排行接口获取排名
-            url_rank = f"https://fund.eastmoney.com/data/rankhandler.aspx?op=ph&dt=kf&ft={fund_type}&rs=&gs=0&sc=6n&st=desc&sd=2024-01-01&ed={datetime.now().strftime('%Y-%m-%d')}&qdii=&tabSubtype=,,,,,&pi=1&pn=1000&dx=1&v=0.123456"
-            resp_rank = requests.get(url_rank, headers=headers, timeout=10)
-            resp_rank.encoding = "utf-8"
-            data = resp_rank.text
-            
-            # 解析排名数据
-            rank_match = re.search(r'"rank":(\d+)', data)
-            total_match = re.search(r'"total":(\d+)', data)
-            
-            if rank_match and total_match:
-                return f"{rank_match.group(1)}/{total_match.group(1)}"
-            
-            rank_match = re.search(r'rank:(\d+)', data)
-            total_match = re.search(r'total:(\d+)', data)
-            if rank_match and total_match:
-                return f"{rank_match.group(1)}/{total_match.group(1)}"
-    except:
-        pass
-
-    # 方式2：通过 pingzhongdata 接口获取
-    try:
-        url = f"https://fund.eastmoney.com/pingzhongdata/{code}.js"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, headers=headers, timeout=10)
-        resp.encoding = "utf-8"
-        if resp.status_code == 200:
-            content = resp.text
-            rank_match = re.search(r'var rank\s*=\s*"(\d+)"', content)
-            total_match = re.search(r'var rank_total\s*=\s*"(\d+)"', content)
-            if rank_match and total_match:
-                return f"{rank_match.group(1)}/{total_match.group(1)}"
-            rank_match = re.search(r'var _rank\s*=\s*(\d+)', content)
-            total_match = re.search(r'var _rankTotal\s*=\s*(\d+)', content)
-            if rank_match and total_match:
-                return f"{rank_match.group(1)}/{total_match.group(1)}"
-    except:
-        pass
-
-    # 方式3：解析 HTML 页面（备选）
-    try:
-        url = f"https://fund.eastmoney.com/{code}.html"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, headers=headers, timeout=10)
-        resp.encoding = "utf-8"
-        html = resp.text
-        rank_match = re.search(r'同类排名</span>：?<span[^>]*>(\d+)', html)
-        total_match = re.search(r'同类排名</span>：?\d+\s*/\s*(\d+)', html)
-        if rank_match and total_match:
-            return f"{rank_match.group(1)}/{total_match.group(1)}"
-        match = re.search(r'(\d+)\s*/\s*(\d+)\s*</span>', html)
-        if match:
-            return f"{match.group(1)}/{match.group(2)}"
-    except:
-        pass
-
-    return "数据暂缺"
-# ==========================================
 
 def get_fund_holdings(code):
     try:
@@ -295,13 +214,12 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         rate = (nav / cost - 1) * 100 if cost > 0 else 0
         total += market
 
-        rank = get_fund_rank(code)
         holdings = get_fund_holdings(code)
 
         lines.append(
             f"- {code} {name} {pos_type}: 持有{shares}份，成本{cost:.4f}，现价{nav:.4f}，"
             f"市值{market:.2f}，盈亏{profit:+.2f} ({rate:+.2f}%)，"
-            f"同类排名: {rank}，重仓行业: {holdings}"
+            f"重仓行业: {holdings}"
         )
 
     funds_text = "\n".join(lines)
@@ -372,7 +290,6 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 | 当前净值 | X.XXXX |
 | 持有份额 | XXXX 份 |
 | 盈亏 | +/-XX.XX% |
-| 同类排名 | X/XXX（数据暂缺则标注） |
 | 重仓行业 | XX（基于基金名称推断） |
 | **操作信号** | 【买入/加仓/持有/减仓/卖出】 |
 | **信号强度** | 【高/中/低】 |
@@ -381,8 +298,7 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 | **止盈价** | X.XX |
 | **逻辑依据** | 1-2句话 |
 
-**检查清单**（✓/✗ / 数据暂缺）：
-- [ ] 同类排名前50%（数据暂缺标注"不计分"）
+**检查清单**（✓/✗）：
 - [ ] 重仓行业有政策或资金支撑
 - [ ] 当前盈亏在可接受范围
 - [ ] 仓位符合策略设定
@@ -416,10 +332,8 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 【硬性约束】
 - **只能推荐场外基金**（代码以0或5开头，如 022460、005693）
 - **禁止推荐场内ETF**（如 159915、510050、518880 等）
-- 如果想推荐ETF方向，请给出对应的**场外联接基金**代码（如 013123 某某ETF联接C）
-- 如果当前没有合适的场外基金方向，直接输出“暂无”并说明理由
-
-**如果当前没有合适的新方向，直接输出“暂无”并说明理由。**
+- 如果想推荐ETF方向，请给出对应的**场外联接基金**代码
+- 如果当前没有合适的场外基金方向，直接输出"暂无"并说明理由
 
 ---
 
@@ -541,14 +455,13 @@ if __name__ == "__main__":
             profit = (nav - cost) * shares
             rate = (nav / cost - 1) * 100 if cost > 0 else 0
             total_value += market
-            rank = get_fund_rank(code)
             holdings = get_fund_holdings(code)
             report += (
                 f"**{code} {name} {pos_type}**\n"
                 f"  持有: {shares} 份\n"
                 f"  成本: {cost:.4f} → 现价: {nav:.4f}\n"
                 f"  盈亏: {profit:+.2f} ({rate:+.2f}%)\n"
-                f"  排名: {rank} | 重仓: {holdings}\n\n"
+                f"  重仓: {holdings}\n\n"
             )
 
     report += f"**总资产（不含货币基金）**: {total_value:.2f}\n\n"
