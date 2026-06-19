@@ -1,0 +1,51 @@
+{
+  "investment_style": "进取型（最大可承受10-20%回撤）",
+  "time_horizon": 3,
+  "base_fund": "022460",
+  "satellite_funds": ["005693", "011613", "021778", "004368"],
+  "holdings": {
+    "004368": {
+      "name": "前海开源聚财宝货币A",
+      "shares": 10005.76,
+      "cost": 1.0000,
+      "type": "money",
+      "fee_rate": 0.0027
+    },
+    "005693": {
+      "name": "广发中证军工ETF联接C",
+      "shares": 4252.06,
+      "cost": 1.1760,
+      "type": "normal"
+    },
+    "022460": {
+      "name": "易方达中证A500ETF联接C",
+      "shares": 16234.08,
+      "cost": 1.3114,
+      "type": "normal"
+    },
+    "007467": {
+      "name": "华泰柏瑞中证红利低波动ETF联接C",
+      "shares": 624.33,
+      "cost": 1.6020,
+      "type": "normal"
+    },
+    "011613": {
+      "name": "华夏科创50ETF联接C",
+      "shares": 1760.72,
+      "cost": 1.3063,
+      "type": "normal"
+    },
+    "012857": {
+      "name": "汇添富中证主要消费ETF联接C",
+      "shares": 630.51,
+      "cost": 1.8239,
+      "type": "normal"
+    },
+    "021778": {
+      "name": "广发纳指100ETF联接(QDII)人民币F",
+      "shares": 213,
+      "cost": 8.4396,
+      "type": "normal"
+    }
+  }
+}
