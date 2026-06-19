@@ -33,9 +33,7 @@ def load_portfolio():
     FUND_LIST = list(PORTFOLIO.keys())
     print(f"✅ 已加载 {len(FUND_LIST)} 只基金配置")
 
-# ========== 辅助函数 ==========
 def get_fund_name(code):
-    """从天天基金网获取基金名称"""
     try:
         url = f"https://fund.eastmoney.com/pingzhongdata/{code}.js"
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -51,7 +49,6 @@ def get_fund_name(code):
                 return match.group(1).strip()
     except:
         pass
-    
     try:
         url = f"https://fund.eastmoney.com/{code}.html"
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -68,7 +65,6 @@ def get_fund_name(code):
             return name
     except:
         pass
-    
     return code
 
 def get_fund_nav_sina(code):
@@ -137,7 +133,7 @@ def search_news(query, api_key):
         return "未配置 Serper API Key，无法获取实时新闻。"
     url = "https://google.serper.dev/news"
     headers = {"X-API-KEY": api_key, "Content-Type": "application/json"}
-    payload = {"q": query, "num": 6}
+    payload = {"q": query, "num": 8}
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=15)
         if resp.status_code != 200:
@@ -147,7 +143,7 @@ def search_news(query, api_key):
         if not news_items:
             return "未找到相关新闻。"
         news_lines = []
-        for idx, item in enumerate(news_items[:6], 1):
+        for idx, item in enumerate(news_items[:8], 1):
             title = item.get('title', '')
             snippet = item.get('snippet', '')
             link = item.get('link', '')
@@ -185,7 +181,7 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         model = "deepseek-v4-pro"
         print("🧠 使用 DeepSeek 模型")
     else:
-        return "⚠️ 未设置任何 API Key (GEMINI_API_KEY 或 DEEPSEEK_API_KEY)"
+        return "⚠️ 未设置任何 API Key"
 
     lines = []
     total = 0
@@ -203,8 +199,7 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         if fund_type == 'money':
             fee_rate = config.get('fee_rate', 0.0033)
             money_fund_lines.append(
-                f"- {code} {name} {pos_type} 【货币基金】: 持有{shares}份，"
-                f"费率{fee_rate*100:.2f}%/年"
+                f"- {code} {name} {pos_type} 【货币基金】: 持有{shares}份，费率{fee_rate*100:.2f}%/年"
             )
             continue
 
@@ -213,13 +208,10 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         profit = (nav - cost) * shares
         rate = (nav / cost - 1) * 100 if cost > 0 else 0
         total += market
-
         holdings = get_fund_holdings(code)
-
         lines.append(
             f"- {code} {name} {pos_type}: 持有{shares}份，成本{cost:.4f}，现价{nav:.4f}，"
-            f"市值{market:.2f}，盈亏{profit:+.2f} ({rate:+.2f}%)，"
-            f"重仓行业: {holdings}"
+            f"市值{market:.2f}，盈亏{profit:+.2f} ({rate:+.2f}%)，重仓行业: {holdings}"
         )
 
     funds_text = "\n".join(lines)
@@ -236,7 +228,7 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 """
 
     today = datetime.now().strftime('%Y-%m-%d')
-    news_query = f"A股 热点 板块 资金流向 {today}"
+    news_query = f"A股 热点 板块 资金流向 政策 {today}"
     print("🔍 正在搜索今日市场动态...")
     news_text = search_news(news_query, SERPER_API_KEY)
     if "未配置" in news_text or "失败" in news_text:
@@ -248,14 +240,13 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     print(f"📊 宏观估值信号：{valuation['signal']}，建议仓位：{valuation['suggested_position']}")
 
     prompt = f"""
-你是一位顶级量化投资顾问，回答必须**直接、量化、有明确信号**。
+你是一位顶级量化投资顾问。回答必须**直接、量化、有明确信号**，不要输出推理过程，只输出最终结论。
 
-【今日实时市场动态】（来自 Google 搜索）
+【今日市场动态】（内部参考，不对外输出）
 {news_text}
 
-【宏观择时信号】（基于沪深300估值）
-- 当前PE：{valuation['pe']}
-- 历史百分位：{valuation['percentile']}
+【宏观择时信号】（内部参考）
+- PE百分位：{valuation['percentile']}
 - 信号：{valuation['signal']}
 - 建议整体仓位：{valuation['suggested_position']}
 
@@ -265,51 +256,25 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 {strategy_text}
 风险偏好：{INVESTMENT_STYLE}，可承受10-20%回撤。
 
-【决策前自检框架】
-在输出任何操作建议之前，你必须先完成以下自检，确保建议是合理的：
+【内部决策流程】（不对外输出，仅用于推导结论）
+1. 推演逻辑：综合市场状态、赔率分析、仓位配置、时政新闻、资金流向，完成深度推演
+2. 量化打分：按规则计算各维度分数
+3. 决策自检：一致性、策略对齐、风险收益比、可执行性、反向测试全部通过
+4. 产出结论
 
-1. **一致性检查**：我的所有建议是否相互矛盾？（例如：建议加仓某行业的同时又建议减仓同行业其他基金）
-2. **策略对齐**：是否与底仓/卫星仓策略一致？（底仓不减仓、卫星仓波段操作）
-3. **风险收益比**：每一条建议的潜在收益是否大于潜在风险？（至少 2:1）
-4. **可执行性**：建议是否具体到"买多少、卖多少"？（具体份额或比例）
-5. **反向测试**：如果市场明天反向走 5%，我的建议会带来多大损失？是否在可接受范围内？
-
-自检完成后，如果所有检查都通过，再输出报告；如果有不通过的项，调整建议直到通过。
-
-【任务】请按以下格式输出完整的分析报告：
+【输出要求】直接输出以下格式，不要输出推理过程：
 
 ---
 
 ## 📊 一、整体组合评分
 
-请严格按照以下规则计算各维度分数（1-10分），不要凭感觉打分：
-
-**收益表现评分规则**：
-- 整体收益率 > 5% → 8-10分
-- 整体收益率 0-5% → 5-7分
-- 整体收益率 < 0% → 1-4分
-
-**风险控制评分规则**：
-- 最大回撤 < 3% → 8-10分
-- 最大回撤 3-8% → 5-7分
-- 最大回撤 > 8% → 1-4分
-
-**行业分散评分规则**：
-- 覆盖 ≥ 5 个不同行业 → 8-10分
-- 覆盖 3-4 个行业 → 5-7分
-- 覆盖 ≤ 2 个行业 → 1-4分
-
-**持仓质量评分规则**：
-- 盈利基金占比 ≥ 80% → 8-10分
-- 盈利基金占比 50-80% → 5-7分
-- 盈利基金占比 < 50% → 1-4分
-
-**宏观适配评分规则**：
-- PE百分位 < 30% → 8-10分（低估，适合高仓位）
-- PE百分位 30-70% → 5-7分（中性，适合中等仓位）
-- PE百分位 > 70% → 1-4分（高估，适合低仓位）
-
-**综合评分** = 五个维度的平均分（四舍五入到一位小数）
+严格按照以下规则计算：
+- 收益表现：整体收益率 >5% →8-10分，0-5% →5-7分，<0% →1-4分
+- 风险控制：最大回撤 <3% →8-10分，3-8% →5-7分，>8% →1-4分
+- 行业分散：覆盖 ≥5个行业 →8-10分，3-4个 →5-7分，≤2个 →1-4分
+- 持仓质量：盈利基金占比 ≥80% →8-10分，50-80% →5-7分，<50% →1-4分
+- 宏观适配：PE百分位 <30% →8-10分，30-70% →5-7分，>70% →1-4分
+- 综合评分 = 五维平均分（四舍五入到一位小数）
 
 | 维度 | 评分（1-10） | 说明 |
 |------|-------------|------|
@@ -330,14 +295,13 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 | 当前净值 | X.XXXX |
 | 持有份额 | XXXX 份 |
 | 盈亏 | +/-XX.XX% |
-| 重仓行业 | XX（基于基金名称推断） |
+| 重仓行业 | XX |
 | **操作信号** | 【买入/加仓/持有/减仓/卖出】 |
 | **信号强度** | 【高/中/低】 |
-| **建议买入价** | X.XX（若适用） |
+| **建议买入价** | X.XX（若适用，否则写"不适用"） |
 | **止损价** | X.XX |
 | **止盈价** | X.XX |
 | **逻辑依据** | 1-2句话 |
-| **自检通过** | 一致性:✓/✗ 策略对齐:✓/✗ 风险收益比:✓/✗ 可执行性:✓/✗ 反向测试:✓/✗ |
 
 **检查清单**（✓/✗）：
 - [ ] 重仓行业有政策或资金支撑
@@ -349,41 +313,33 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 
 ## 🎯 三、今日操作优先级
 
-按重要性排序：
+按重要性排序，每项说明操作理由和预期效果：
+
+1. **【基金代码】- 操作：XXX**
+   - 理由：...
+   - 预期效果：...
 
 ---
 
-## 🔮 四、市场判断与机会
+## 🔮 四、建议关注的新方向
 
-**整体市场判断**：（一句话）
-**当前最大风险**：（一句话）
+最多2个，如果没有合适方向直接输出"暂无"。
 
-**建议关注的新方向**：（最多2个，按以下格式）
-1. **方向名称 + 代表基金代码（必须是场外基金，0或5开头）**
-   - 推荐理由：与现有持仓的差异化互补点（不重复）
-   - 当前估值位置：（高/中/低/历史分位）
+1. **方向名称 + 代表基金代码（场外基金，0或5开头）**
+   - 推荐理由：与现有持仓差异化互补
    - 入场建议：【现在买/等回调X%/分批建仓】
    - 参考触发价：X.XX（如适用）
    - 预期持有周期：（短线/中线/长线）
-   - 与本轮操作建议的协调性：（不矛盾）
 
-2. **方向名称 + 代表基金代码（必须是场外基金，0或5开头）**
-   - 同上格式
-
-【硬性约束】
-- **只能推荐场外基金**（代码以0或5开头，如 022460、005693）
-- **禁止推荐场内ETF**（如 159915、510050、518880 等）
-- 如果想推荐ETF方向，请给出对应的**场外联接基金**代码
-- 如果当前没有合适的场外基金方向，直接输出"暂无"并说明理由
+【硬性约束】只能推荐场外基金，禁止推荐场内ETF。
 
 ---
 
 【硬性要求】
-- 新方向推荐**必须**与现有持仓差异化，不能重复同方向
-- 必须给出**入场时机和触发条件**，避免追高
-- 必须与今日操作建议逻辑一致
-- 禁止使用模糊词
-- 总字数控制在 1200 字以内
+- 禁止输出"市场状态诊断"、"赔率分析"、"仓位配置诊断"等中间推理
+- 禁止使用"可能"、"或许"等模糊词
+- 每只基金必须有明确的操作信号
+- 总字数控制在 1000 字以内
 
 当前日期：{datetime.now().strftime('%Y-%m-%d')}
 """
