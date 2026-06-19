@@ -336,7 +336,7 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     url = "https://api.deepseek.com/chat/completions"
     headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
     payload = {
-        "model": "deepseek-v4-flash",
+        "model": "deepseek-v4-pro",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 4000,
         "temperature": 0.7
