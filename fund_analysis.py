@@ -105,9 +105,49 @@ def get_fund_nav_eastmoney(code):
         pass
     return None
 
-# ========== 新版的 get_fund_rank（JSONP API） ==========
+# ========== 升级版 get_fund_rank ==========
 def get_fund_rank(code):
-    """获取基金同类排名（使用 API 接口，更稳定）"""
+    """获取基金同类排名（多方式尝试）"""
+    # 方式1：通过基金类型排行接口获取
+    try:
+        # 先获取基金类型
+        url_type = f"https://fund.eastmoney.com/{code}.html"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url_type, headers=headers, timeout=10)
+        resp.encoding = "utf-8"
+        html = resp.text
+        
+        # 获取基金类型代码
+        type_match = re.search(r'var ftype\s*=\s*"(\d+)"', html)
+        if not type_match:
+            type_match = re.search(r'ftype\s*=\s*"(\d+)"', html)
+        if not type_match:
+            # 如果没找到类型，跳过此方式
+            pass
+        else:
+            fund_type = type_match.group(1)
+            
+            # 通过排行接口获取排名
+            url_rank = f"https://fund.eastmoney.com/data/rankhandler.aspx?op=ph&dt=kf&ft={fund_type}&rs=&gs=0&sc=6n&st=desc&sd=2024-01-01&ed={datetime.now().strftime('%Y-%m-%d')}&qdii=&tabSubtype=,,,,,&pi=1&pn=1000&dx=1&v=0.123456"
+            resp_rank = requests.get(url_rank, headers=headers, timeout=10)
+            resp_rank.encoding = "utf-8"
+            data = resp_rank.text
+            
+            # 解析排名数据
+            rank_match = re.search(r'"rank":(\d+)', data)
+            total_match = re.search(r'"total":(\d+)', data)
+            
+            if rank_match and total_match:
+                return f"{rank_match.group(1)}/{total_match.group(1)}"
+            
+            rank_match = re.search(r'rank:(\d+)', data)
+            total_match = re.search(r'total:(\d+)', data)
+            if rank_match and total_match:
+                return f"{rank_match.group(1)}/{total_match.group(1)}"
+    except:
+        pass
+
+    # 方式2：通过 pingzhongdata 接口获取
     try:
         url = f"https://fund.eastmoney.com/pingzhongdata/{code}.js"
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -126,6 +166,7 @@ def get_fund_rank(code):
     except:
         pass
 
+    # 方式3：解析 HTML 页面（备选）
     try:
         url = f"https://fund.eastmoney.com/{code}.html"
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -143,7 +184,7 @@ def get_fund_rank(code):
         pass
 
     return "数据暂缺"
-# =====================================================
+# ==========================================
 
 def get_fund_holdings(code):
     try:
