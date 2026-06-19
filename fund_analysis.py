@@ -33,51 +33,42 @@ def load_portfolio():
     FUND_LIST = list(PORTFOLIO.keys())
     print(f"✅ 已加载 {len(FUND_LIST)} 只基金配置")
 
-# ========== 辅助函数（保持不变） ==========
+# ========== 辅助函数 ==========
 def get_fund_name(code):
     """从天天基金网获取基金名称（使用 API 接口，更稳定）"""
     try:
-        # 方法1：使用天天基金网的 JSONP 接口
         url = f"https://fund.eastmoney.com/pingzhongdata/{code}.js"
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(url, headers=headers, timeout=10)
         resp.encoding = "utf-8"
         if resp.status_code == 200:
-            # 解析 JS 文件中的基金名称
             content = resp.text
-            # 匹配 var fName = "基金名称";
             match = re.search(r'var fName\s*=\s*"([^"]+)"', content)
             if match:
                 return match.group(1).strip()
-            # 匹配 var _fundName = "基金名称";
             match = re.search(r'var _fundName\s*=\s*"([^"]+)"', content)
             if match:
                 return match.group(1).strip()
     except:
         pass
     
-    # 方法2：备选 - 解析 HTML 页面
     try:
         url = f"https://fund.eastmoney.com/{code}.html"
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(url, headers=headers, timeout=10)
         resp.encoding = "utf-8"
         html = resp.text
-        # 匹配 <title>基金名称(代码) 净值... </title>
         match = re.search(r'<title>(.*?)\(', html)
         if match:
             return match.group(1).strip()
-        # 匹配 h1 标签中的名称
         match = re.search(r'<h1[^>]*>(.*?)</h1>', html)
         if match:
             name = match.group(1).strip()
-            # 清理可能包含的代码
             name = re.sub(r'\(\d+\)', '', name).strip()
             return name
     except:
         pass
     
-    # 如果都失败，返回基金代码本身
     return code
 
 def get_fund_nav_sina(code):
@@ -114,17 +105,16 @@ def get_fund_nav_eastmoney(code):
         pass
     return None
 
+# ========== 新版的 get_fund_rank（JSONP API） ==========
 def get_fund_rank(code):
     """获取基金同类排名（使用 API 接口，更稳定）"""
     try:
-        # 方法1：使用天天基金网的 JSONP 接口
         url = f"https://fund.eastmoney.com/pingzhongdata/{code}.js"
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(url, headers=headers, timeout=10)
         resp.encoding = "utf-8"
         if resp.status_code == 200:
             content = resp.text
-            # 匹配同类排名
             rank_match = re.search(r'var rank\s*=\s*"(\d+)"', content)
             total_match = re.search(r'var rank_total\s*=\s*"(\d+)"', content)
             if rank_match and total_match:
@@ -136,7 +126,6 @@ def get_fund_rank(code):
     except:
         pass
 
-    # 方法2：备选 - 解析 HTML 页面
     try:
         url = f"https://fund.eastmoney.com/{code}.html"
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -154,6 +143,7 @@ def get_fund_rank(code):
         pass
 
     return "数据暂缺"
+# =====================================================
 
 def get_fund_holdings(code):
     try:
@@ -217,7 +207,6 @@ def get_market_valuation():
     }
 
 def analyze_with_deepseek(fund_data_list, portfolio):
-    # 确定初始模型
     use_gemini = False
     api_key = None
     url = None
@@ -238,7 +227,6 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     else:
         return "⚠️ 未设置任何 API Key (GEMINI_API_KEY 或 DEEPSEEK_API_KEY)"
 
-    # 构建持仓详情
     lines = []
     total = 0
     money_fund_lines = []
@@ -404,17 +392,14 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 当前日期：{datetime.now().strftime('%Y-%m-%d')}
 """
 
-    # ===== 请求函数 =====
     def make_request(api_key, url, model, payload):
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        # Gemini 支持 reasoning_effort
         if model.startswith("gemini"):
             payload["reasoning_effort"] = "high"
         resp = requests.post(url, headers=headers, json=payload, timeout=120)
         return resp
 
-    # 尝试请求（支持回退）
-    for attempt in range(3):  # 最多尝试3次（包括回退）
+    for attempt in range(3):
         try:
             print(f"🧠 请求 API (尝试 {attempt+1}/3)...")
             resp = make_request(api_key, url, model, {
@@ -425,15 +410,13 @@ def analyze_with_deepseek(fund_data_list, portfolio):
             })
             print(f"📡 HTTP: {resp.status_code}")
 
-            # 如果 Gemini 429 且 DeepSeek 可用，回退
             if resp.status_code == 429 and use_gemini and DEEPSEEK_API_KEY:
                 print("⚠️ Gemini 配额用尽，自动回退到 DeepSeek...")
                 use_gemini = False
                 api_key = DEEPSEEK_API_KEY
                 url = "https://api.deepseek.com/chat/completions"
                 model = "deepseek-v4-pro"
-                # 重置 payload 中的 model
-                continue  # 重新尝试
+                continue
 
             if resp.status_code != 200:
                 return f"⚠️ API错误 {resp.status_code}: {resp.text[:200]}"
