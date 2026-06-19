@@ -115,22 +115,54 @@ def get_fund_nav_eastmoney(code):
     return None
 
 def get_fund_rank(code):
+    """获取基金同类排名（使用 API 接口，更稳定）"""
+    try:
+        # 方法1：使用天天基金网的 JSONP 接口
+        url = f"https://fund.eastmoney.com/pingzhongdata/{code}.js"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.encoding = "utf-8"
+        if resp.status_code == 200:
+            content = resp.text
+            # 匹配同类排名
+            # 格式示例: var rank = "123"; var rank_total = "456";
+            rank_match = re.search(r'var rank\s*=\s*"(\d+)"', content)
+            total_match = re.search(r'var rank_total\s*=\s*"(\d+)"', content)
+            if rank_match and total_match:
+                rank = rank_match.group(1)
+                total = total_match.group(1)
+                return f"{rank}/{total}"
+            # 备选匹配: var _rank = 123; var _rankTotal = 456;
+            rank_match = re.search(r'var _rank\s*=\s*(\d+)', content)
+            total_match = re.search(r'var _rankTotal\s*=\s*(\d+)', content)
+            if rank_match and total_match:
+                rank = rank_match.group(1)
+                total = total_match.group(1)
+                return f"{rank}/{total}"
+    except:
+        pass
+
+    # 方法2：备选 - 解析 HTML 页面
     try:
         url = f"https://fund.eastmoney.com/{code}.html"
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(url, headers=headers, timeout=10)
         resp.encoding = "utf-8"
         html = resp.text
+        # 匹配同类排名（更精确）
         rank_match = re.search(r'同类排名</span>：?<span[^>]*>(\d+)', html)
         total_match = re.search(r'同类排名</span>：?\d+\s*/\s*(\d+)', html)
         if rank_match and total_match:
             return f"{rank_match.group(1)}/{total_match.group(1)}"
+        # 更宽松的匹配
         match = re.search(r'(\d+)\s*/\s*(\d+)\s*</span>', html)
         if match:
             return f"{match.group(1)}/{match.group(2)}"
-        return "数据暂缺"
     except:
-        return "数据暂缺"
+        pass
+
+    # 如果都失败，返回"数据暂缺"
+    return "数据暂缺"
 
 def get_fund_holdings(code):
     try:
