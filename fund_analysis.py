@@ -125,20 +125,14 @@ def get_fund_rank(code):
         if resp.status_code == 200:
             content = resp.text
             # 匹配同类排名
-            # 格式示例: var rank = "123"; var rank_total = "456";
             rank_match = re.search(r'var rank\s*=\s*"(\d+)"', content)
             total_match = re.search(r'var rank_total\s*=\s*"(\d+)"', content)
             if rank_match and total_match:
-                rank = rank_match.group(1)
-                total = total_match.group(1)
-                return f"{rank}/{total}"
-            # 备选匹配: var _rank = 123; var _rankTotal = 456;
+                return f"{rank_match.group(1)}/{total_match.group(1)}"
             rank_match = re.search(r'var _rank\s*=\s*(\d+)', content)
             total_match = re.search(r'var _rankTotal\s*=\s*(\d+)', content)
             if rank_match and total_match:
-                rank = rank_match.group(1)
-                total = total_match.group(1)
-                return f"{rank}/{total}"
+                return f"{rank_match.group(1)}/{total_match.group(1)}"
     except:
         pass
 
@@ -149,19 +143,16 @@ def get_fund_rank(code):
         resp = requests.get(url, headers=headers, timeout=10)
         resp.encoding = "utf-8"
         html = resp.text
-        # 匹配同类排名（更精确）
         rank_match = re.search(r'同类排名</span>：?<span[^>]*>(\d+)', html)
         total_match = re.search(r'同类排名</span>：?\d+\s*/\s*(\d+)', html)
         if rank_match and total_match:
             return f"{rank_match.group(1)}/{total_match.group(1)}"
-        # 更宽松的匹配
         match = re.search(r'(\d+)\s*/\s*(\d+)\s*</span>', html)
         if match:
             return f"{match.group(1)}/{match.group(2)}"
     except:
         pass
 
-    # 如果都失败，返回"数据暂缺"
     return "数据暂缺"
 
 def get_fund_holdings(code):
