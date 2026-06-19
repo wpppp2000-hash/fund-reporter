@@ -34,7 +34,6 @@ def get_fund_name(code):
         resp = requests.get(url, headers=headers, timeout=10)
         resp.encoding = "utf-8"
         html = resp.text
-        # 匹配标题中的基金名称
         match = re.search(r'<title>(.*?)\(.*?\)</title>', html)
         if match:
             return match.group(1).strip()
@@ -87,12 +86,10 @@ def get_fund_rank(code):
         resp = requests.get(url, headers=headers, timeout=10)
         resp.encoding = "utf-8"
         html = resp.text
-        # 匹配同类排名（更精确）
         rank_match = re.search(r'同类排名</span>：?<span[^>]*>(\d+)', html)
         total_match = re.search(r'同类排名</span>：?\d+\s*/\s*(\d+)', html)
         if rank_match and total_match:
             return f"{rank_match.group(1)}/{total_match.group(1)}"
-        # 备选匹配
         match = re.search(r'(\d+)\s*/\s*(\d+)\s*</span>', html)
         if match:
             return f"{match.group(1)}/{match.group(2)}"
@@ -103,14 +100,7 @@ def get_fund_rank(code):
 def get_fund_holdings(code):
     """获取基金重仓行业（简化版）"""
     try:
-        url = f"https://fund.eastmoney.com/{code}.html"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, headers=headers, timeout=10)
-        resp.encoding = "utf-8"
-        html = resp.text
-        # 匹配基金名称中的关键词来判断行业
         name = get_fund_name(code)
-        # 根据基金名称推断行业
         if '纳指' in name or '纳斯达克' in name:
             return "美股科技（AI、半导体、互联网）"
         elif '军工' in name:
@@ -163,10 +153,7 @@ def search_news(query, api_key):
 
 def get_market_valuation():
     """获取宏观估值信号（优化版）"""
-    # 简化为基于日期的经验值
-    # 实际生产中可接入专业数据源
-    today = datetime.now()
-    # 根据当前时间模拟（实际应调用 API）
+    # 简化为基于日期的经验值，实际可接入专业数据源
     return {
         'pe': "12.5倍",
         'percentile': "45%",
@@ -206,7 +193,6 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         rate = (nav / cost - 1) * 100 if cost > 0 else 0
         total += market
 
-        # 获取增强数据
         rank = get_fund_rank(code)
         holdings = get_fund_holdings(code)
 
@@ -242,9 +228,9 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     valuation = get_market_valuation()
     print(f"📊 宏观估值信号：{valuation['signal']}，建议仓位：{valuation['suggested_position']}")
 
-    # ===== 优化后的 prompt =====
+    # ===== 升级版 Prompt（硬核 + 新方向推荐深度优化） =====
     prompt = f"""
-你是一位顶级量化投资顾问。你的回答必须**直接、量化、有明确信号**，格式像一份内部决策简报。
+你是一位顶级量化投资顾问，回答必须**直接、量化、有明确信号**。
 
 【今日实时市场动态】（来自 Google 搜索）
 {news_text}
@@ -280,16 +266,14 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 
 ## 📈 二、逐只基金决策卡
 
-对每只基金按以下格式输出：
-
 **基金代码 基金名称 【仓位类型】**
 | 项目 | 内容 |
 |------|------|
 | 当前净值 | X.XXXX |
 | 持有份额 | XXXX 份 |
 | 盈亏 | +/-XX.XX% |
-| 同类排名 | X/XXX（数据缺失时标注"数据暂缺"） |
-| 重仓行业 | XX、XX（基于基金名称推断） |
+| 同类排名 | X/XXX（数据暂缺则标注） |
+| 重仓行业 | XX（基于基金名称推断） |
 | **操作信号** | 【买入/加仓/持有/减仓/卖出】 |
 | **信号强度** | 【高/中/低】 |
 | **建议买入价** | X.XX（若适用） |
@@ -297,8 +281,8 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 | **止盈价** | X.XX |
 | **逻辑依据** | 1-2句话 |
 
-**检查清单**（✓/✗ 或 "数据暂缺，不计分"）：
-- [ ] 同类排名前50%（若数据缺失标注"数据暂缺，不计分"）
+**检查清单**（✓/✗ / 数据暂缺）：
+- [ ] 同类排名前50%（数据暂缺标注"不计分"）
 - [ ] 重仓行业有政策或资金支撑
 - [ ] 当前盈亏在可接受范围
 - [ ] 仓位符合策略设定
@@ -316,14 +300,28 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 
 **整体市场判断**：（一句话）
 **当前最大风险**：（一句话）
-**建议关注的新方向**：（1-2个板块/基金，含代码和理由）
+
+**建议关注的新方向**：（最多2个，按以下格式）
+1. **方向名称 + 代表基金代码**
+   - 推荐理由：与现有持仓的差异化互补点（不重复）
+   - 当前估值位置：（高/中/低/历史分位）
+   - 入场建议：【现在买/等回调X%/分批建仓】
+   - 参考触发价：X.XX（如适用）
+   - 预期持有周期：（短线/中线/长线）
+   - 与本轮操作建议的协调性：（不矛盾）
+
+2. **方向名称 + 代表基金代码**
+   - 同上格式
+
+**如果当前没有合适的新方向，直接输出“暂无”并说明理由。**
 
 ---
 
 【硬性要求】
-- 每只基金必须有明确的操作信号
-- 检查清单中，若某项数据缺失，标注"数据暂缺，不计分"，不要直接打✗
-- 禁止使用"可能"、"或许"等模糊词
+- 新方向推荐**必须**与现有持仓差异化，不能重复同方向
+- 必须给出**入场时机和触发条件**，避免追高
+- 必须与今日操作建议逻辑一致
+- 禁止使用模糊词
 - 总字数控制在 1200 字以内
 
 当前日期：{datetime.now().strftime('%Y-%m-%d')}
