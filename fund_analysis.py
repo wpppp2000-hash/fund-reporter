@@ -43,7 +43,6 @@ def load_portfolio():
 
 # ========== 交易日判断 ==========
 def is_trading_day():
-    """判断今天是否是A股交易日，获取失败时默认为交易日（避免误停）"""
     try:
         today = datetime.now().strftime('%Y-%m-%d')
         trade_cal = ak.tool_trade_date_hist_sina()
@@ -54,7 +53,7 @@ def is_trading_day():
     except Exception as e:
         print(f"⚠️ 获取交易日历失败: {e}")
         print("📅 默认视为交易日，继续运行")
-        return True  # 默认视为交易日，避免误停
+        return True
 
 # ========== 历史数据读写 ==========
 def load_nav_history(days=5):
@@ -455,20 +454,37 @@ def analyze_with_deepseek(fund_data_list, portfolio, nav_history, analysis_histo
 
     return "⚠️ 未知错误", None
 
+# ========== 增强版飞书推送 ==========
 def send_to_feishu(message):
     if not FEISHU_WEBHOOK:
         print("❌ 未配置 FEISHU_WEBHOOK 环境变量")
         return
+    
+    print(f"📨 正在推送消息到飞书...")
+    print(f"📝 消息长度: {len(message)} 字符")
+    
     data = {"msg_type": "text", "content": {"text": message}}
     try:
         r = requests.post(FEISHU_WEBHOOK, json=data, timeout=10)
-        print(f"📡 飞书响应状态码: {r.status_code}")
+        print(f"📡 HTTP 状态码: {r.status_code}")
+        print(f"📡 响应内容: {r.text}")
+        
         if r.status_code == 200:
-            print("✅ 飞书推送成功")
+            try:
+                resp_json = r.json()
+                if resp_json.get('code') == 0:
+                    print("✅ 飞书推送成功")
+                else:
+                    print(f"❌ 飞书返回错误码: {resp_json.get('code')}, 消息: {resp_json.get('msg')}")
+            except:
+                print("⚠️ 无法解析飞书响应")
         else:
-            print(f"❌ 飞书推送失败: {r.status_code} {r.text}")
+            print(f"❌ 推送失败，HTTP {r.status_code}")
+    except requests.exceptions.Timeout:
+        print("❌ 飞书请求超时")
     except Exception as e:
         print(f"❌ 飞书推送异常: {e}")
+# =====================================
 
 if __name__ == "__main__":
     # 1. 创建历史目录
