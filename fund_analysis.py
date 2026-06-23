@@ -46,40 +46,63 @@ def is_trading_day():
     """判断今天是否是A股交易日"""
     try:
         today = datetime.now().strftime('%Y-%m-%d')
-        # 方法1：直接用 akshare 的交易日历（支持到2026年）
+        # 方法1：先用 akshare 获取
         trade_cal = ak.tool_trade_date_hist_sina()
         if trade_cal is not None and not trade_cal.empty:
             dates = trade_cal['trade_date'].tolist()
-            is_trading = today in dates
-            print(f"📅 交易日判断(akshare): {'交易日' if is_trading else '非交易日'} ({today})")
-            return is_trading
-        else:
-            print("⚠️ akshare 返回空数据，尝试其他方式...")
+            # 如果今天在列表中，直接返回
+            if today in dates:
+                print(f"📅 交易日(akshare): 交易日 ({today})")
+                return True
+            else:
+                # 如果不在，可能是数据到2024年，继续用硬编码判断
+                print(f"⚠️ akshare 未包含 {today}，使用硬编码判断...")
     except Exception as e:
-        print(f"⚠️ akshare 获取失败: {e}")
+        print(f"⚠️ akshare 获取交易日历失败: {e}")
 
-    # 方法2：硬编码常用日期（备选）
+    # 方法2：硬编码判断（基于周几和节假日）
     try:
-        # 2026年节假日列表（春节、清明、五一、端午、中秋、国庆）
-        holidays_2026 = [
-            "2026-01-01", "2026-01-02",  # 元旦
-            "2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20",  # 春节
-            "2026-04-06",  # 清明
-            "2026-05-01", "2026-05-04", "2026-05-05",  # 五一
-            "2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26",  # 端午
-            "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06", "2026-10-07",  # 国庆
-        ]
         today = datetime.now().strftime('%Y-%m-%d')
         weekday = datetime.now().weekday()
-        is_weekend = weekday >= 5  # 5=周六，6=周日
-        is_holiday = today in holidays_2026
-        is_trading = not is_weekend and not is_holiday
-        print(f"📅 交易日判断(硬编码): {'交易日' if is_trading else '非交易日'} ({today})")
-        return is_trading
+        is_weekend = weekday >= 5
+        if is_weekend:
+            print(f"📅 硬编码判断: 非交易日 ({today}，周末)")
+            return False
+        
+        # 2026年A股节假日列表（根据国务院安排）
+        holidays = [
+            "2026-01-01", "2026-01-02",                     # 元旦
+            "2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20",  # 春节
+            "2026-04-06",                                   # 清明节
+            "2026-05-01", "2026-05-04", "2026-05-05",       # 劳动节
+            "2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26",  # 端午节
+            "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06", "2026-10-07",  # 国庆节
+        ]
+        if today in holidays:
+            print(f"📅 硬编码判断: 非交易日 ({today}，节假日)")
+            return False
+        
+        # 调休日：有些周末要补班，属于交易日
+        # 2026年调休补班日期（根据国务院安排）
+        work_weekends = [
+            "2026-01-04",   # 元旦调休补班
+            "2026-02-14", "2026-02-15",  # 春节调休补班
+            "2026-04-11", "2026-04-12",  # 清明调休补班
+            "2026-05-09", "2026-05-10",  # 五一调休补班
+            "2026-06-20", "2026-06-21",  # 端午调休补班（假设）
+            "2026-09-26", "2026-10-10",  # 国庆调休补班
+        ]
+        if today in work_weekends:
+            print(f"📅 硬编码判断: 交易日 ({today}，调休补班)")
+            return True
+        
+        # 其他非周末非节假日都是交易日
+        print(f"📅 硬编码判断: 交易日 ({today})")
+        return True
     except Exception as e:
         print(f"⚠️ 硬编码判断失败: {e}")
 
-    # 方法3：最后保底，默认视为交易日
+    # 最后保底：默认视为交易日
     print("📅 默认视为交易日，继续运行")
     return True
 
