@@ -43,12 +43,39 @@ def load_portfolio():
 
 # ========== 交易日判断 ==========
 def is_trading_day():
+    """判断今天是否是A股交易日（使用东方财富接口）"""
+    try:
+        today = datetime.now().strftime('%Y-%m-%d')
+        # 尝试用东方财富的交易日历接口
+        url = "https://datacenter.eastmoney.com/api/data/get"
+        params = {
+            "type": "RPTA_WEB_TRD_DATE",
+            "sty": "ALL",
+            "source": "WEB",
+            "p": "1",
+            "ps": "1000",
+            "st": "TRADE_DATE",
+            "sr": "-1",
+            "filter": f"(TRADE_DATE>='2026-01-01' AND TRADE_DATE<='2026-12-31')"
+        }
+        resp = requests.get(url, params=params, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            dates = [item['TRADE_DATE'] for item in data.get('result', {}).get('data', [])]
+            if dates:
+                is_trading = today in dates
+                print(f"📅 交易日判断: {'交易日' if is_trading else '非交易日'} ({today})")
+                return is_trading
+    except Exception as e:
+        print(f"⚠️ 获取交易日历失败: {e}")
+    
+    # 备选方案：使用新浪接口（可能数据旧）
     try:
         today = datetime.now().strftime('%Y-%m-%d')
         trade_cal = ak.tool_trade_date_hist_sina()
         dates = trade_cal['trade_date'].tolist()
         is_trading = today in dates
-        print(f"📅 交易日判断: {'交易日' if is_trading else '非交易日'} ({today})")
+        print(f"📅 交易日判断(新浪): {'交易日' if is_trading else '非交易日'} ({today})")
         return is_trading
     except Exception as e:
         print(f"⚠️ 获取交易日历失败: {e}")
