@@ -43,44 +43,45 @@ def load_portfolio():
 
 # ========== 交易日判断 ==========
 def is_trading_day():
-    """判断今天是否是A股交易日（使用东方财富接口）"""
+    """判断今天是否是A股交易日"""
     try:
         today = datetime.now().strftime('%Y-%m-%d')
-        # 尝试用东方财富的交易日历接口
-        url = "https://datacenter.eastmoney.com/api/data/get"
-        params = {
-            "type": "RPTA_WEB_TRD_DATE",
-            "sty": "ALL",
-            "source": "WEB",
-            "p": "1",
-            "ps": "1000",
-            "st": "TRADE_DATE",
-            "sr": "-1",
-            "filter": f"(TRADE_DATE>='2026-01-01' AND TRADE_DATE<='2026-12-31')"
-        }
-        resp = requests.get(url, params=params, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            dates = [item['TRADE_DATE'] for item in data.get('result', {}).get('data', [])]
-            if dates:
-                is_trading = today in dates
-                print(f"📅 交易日判断: {'交易日' if is_trading else '非交易日'} ({today})")
-                return is_trading
-    except Exception as e:
-        print(f"⚠️ 获取交易日历失败: {e}")
-    
-    # 备选方案：使用新浪接口（可能数据旧）
-    try:
-        today = datetime.now().strftime('%Y-%m-%d')
+        # 方法1：直接用 akshare 的交易日历（支持到2026年）
         trade_cal = ak.tool_trade_date_hist_sina()
-        dates = trade_cal['trade_date'].tolist()
-        is_trading = today in dates
-        print(f"📅 交易日判断(新浪): {'交易日' if is_trading else '非交易日'} ({today})")
+        if trade_cal is not None and not trade_cal.empty:
+            dates = trade_cal['trade_date'].tolist()
+            is_trading = today in dates
+            print(f"📅 交易日判断(akshare): {'交易日' if is_trading else '非交易日'} ({today})")
+            return is_trading
+        else:
+            print("⚠️ akshare 返回空数据，尝试其他方式...")
+    except Exception as e:
+        print(f"⚠️ akshare 获取失败: {e}")
+
+    # 方法2：硬编码常用日期（备选）
+    try:
+        # 2026年节假日列表（春节、清明、五一、端午、中秋、国庆）
+        holidays_2026 = [
+            "2026-01-01", "2026-01-02",  # 元旦
+            "2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20",  # 春节
+            "2026-04-06",  # 清明
+            "2026-05-01", "2026-05-04", "2026-05-05",  # 五一
+            "2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26",  # 端午
+            "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06", "2026-10-07",  # 国庆
+        ]
+        today = datetime.now().strftime('%Y-%m-%d')
+        weekday = datetime.now().weekday()
+        is_weekend = weekday >= 5  # 5=周六，6=周日
+        is_holiday = today in holidays_2026
+        is_trading = not is_weekend and not is_holiday
+        print(f"📅 交易日判断(硬编码): {'交易日' if is_trading else '非交易日'} ({today})")
         return is_trading
     except Exception as e:
-        print(f"⚠️ 获取交易日历失败: {e}")
-        print("📅 默认视为交易日，继续运行")
-        return True
+        print(f"⚠️ 硬编码判断失败: {e}")
+
+    # 方法3：最后保底，默认视为交易日
+    print("📅 默认视为交易日，继续运行")
+    return True
 
 # ========== 历史数据读写 ==========
 def load_nav_history(days=5):
