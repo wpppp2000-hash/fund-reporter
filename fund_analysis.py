@@ -2,7 +2,8 @@ import requests
 import os
 import re
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
+import akshare as ak
 
 # ========== 全局变量 ==========
 INVESTMENT_STYLE = ""
@@ -16,7 +17,14 @@ DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 FEISHU_WEBHOOK = os.environ.get('FEISHU_WEBHOOK')
 SERPER_API_KEY = os.environ.get('SERPER_API_KEY')
+
+HISTORY_DIR = "history"  # 历史数据存储目录
 # ==================================
+
+def ensure_history_dir():
+    """确保历史数据目录存在"""
+    if not os.path.exists(HISTORY_DIR):
+        os.makedirs(HISTORY_DIR)
 
 def load_portfolio():
     global INVESTMENT_STYLE, TIME_HORIZON, BASE_FUND, SATELLITE_FUNDS, PORTFOLIO, FUND_LIST
@@ -33,6 +41,68 @@ def load_portfolio():
     FUND_LIST = list(PORTFOLIO.keys())
     print(f"✅ 已加载 {len(FUND_LIST)} 只基金配置")
 
+# ========== 交易日判断 ==========
+def is_trading_day():
+    try:
+        today = datetime.now().strftime('%Y-%m-%d')
+        trade_cal = ak.tool_trade_date_hist_sina()
+        dates = trade_cal['trade_date'].tolist()
+        return today in dates
+    except Exception as e:
+        print(f"⚠️ 获取交易日历失败: {e}，默认视为交易日")
+        return True
+
+# ========== 历史数据读写 ==========
+def load_nav_history(days=5):
+    """加载最近 N 天的净值历史"""
+    nav_file = os.path.join(HISTORY_DIR, "nav.json")
+    if not os.path.exists(nav_file):
+        return {}
+    with open(nav_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    # 只返回最近 days 天的数据
+    sorted_dates = sorted(data.keys(), reverse=True)
+    recent_dates = sorted_dates[:days]
+    return {d: data[d] for d in recent_dates}
+
+def load_analysis_history(days=3):
+    """加载最近 N 天的分析摘要"""
+    analysis_file = os.path.join(HISTORY_DIR, "analysis.json")
+    if not os.path.exists(analysis_file):
+        return {}
+    with open(analysis_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    sorted_dates = sorted(data.keys(), reverse=True)
+    recent_dates = sorted_dates[:days]
+    return {d: data[d] for d in recent_dates}
+
+def save_nav_history(date, nav_data):
+    """保存当天净值数据"""
+    nav_file = os.path.join(HISTORY_DIR, "nav.json")
+    data = {}
+    if os.path.exists(nav_file):
+        with open(nav_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    data[date] = nav_data
+    with open(nav_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def save_analysis_history(date, score, summary, suggestions):
+    """保存当天分析摘要"""
+    analysis_file = os.path.join(HISTORY_DIR, "analysis.json")
+    data = {}
+    if os.path.exists(analysis_file):
+        with open(analysis_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    data[date] = {
+        "score": score,
+        "summary": summary,
+        "suggestions": suggestions
+    }
+    with open(analysis_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+# ========== 辅助函数 ==========
 def get_fund_name(code):
     try:
         url = f"https://fund.eastmoney.com/pingzhongdata/{code}.js"
@@ -162,7 +232,7 @@ def get_market_valuation():
         'suggested_position': "70-80%"
     }
 
-def analyze_with_deepseek(fund_data_list, portfolio):
+def analyze_with_deepseek(fund_data_list, portfolio, nav_history, analysis_history):
     use_gemini = False
     api_key = None
     url = None
@@ -181,11 +251,13 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         model = "deepseek-v4-pro"
         print("🧠 使用 DeepSeek 模型")
     else:
-        return "⚠️ 未设置任何 API Key"
+        return "⚠️ 未设置任何 API Key", None
 
+    # 构建当日持仓详情
     lines = []
     total = 0
     money_fund_lines = []
+    nav_record = {}  # 用于保存历史净值
 
     for item in fund_data_list:
         code = item['code']
@@ -195,6 +267,7 @@ def analyze_with_deepseek(fund_data_list, portfolio):
         fund_type = config.get('type', 'normal')
         name = get_fund_name(code)
         pos_type = get_position_type(code)
+        nav_record[code] = nav  # 记录净值
 
         if fund_type == 'money':
             fee_rate = config.get('fee_rate', 0.0033)
@@ -239,7 +312,40 @@ def analyze_with_deepseek(fund_data_list, portfolio):
     valuation = get_market_valuation()
     print(f"📊 宏观估值信号：{valuation['signal']}，建议仓位：{valuation['suggested_position']}")
 
-    # ===================== 精简版 Prompt =====================
+    # ===== 构造历史趋势信息 =====
+    history_text = ""
+    if nav_history:
+        # 最近5天净值趋势
+        history_text += "\n【最近5天净值趋势（供参考）】\n"
+        sorted_dates = sorted(nav_history.keys())
+        for d in sorted_dates[-5:]:
+            day_nav = nav_history[d]
+            trend_line = f"{d}: "
+            for code in sorted(day_nav.keys()):
+                if code in FUND_LIST:
+                    trend_line += f"{code}={day_nav[code]:.4f} "
+            history_text += trend_line + "\n"
+    
+    if analysis_history:
+        # 最近1天分析摘要
+        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        if yesterday in analysis_history:
+            y = analysis_history[yesterday]
+            history_text += f"\n【昨日分析摘要（{yesterday}）】\n"
+            history_text += f"评分: {y.get('score', 'N/A')}\n"
+            history_text += f"诊断: {y.get('summary', '')}\n"
+            history_text += f"操作建议: {y.get('suggestions', '')}\n"
+        else:
+            # 找最近的一天
+            if analysis_history:
+                last_date = max(analysis_history.keys())
+                y = analysis_history[last_date]
+                history_text += f"\n【最近分析摘要（{last_date}）】\n"
+                history_text += f"评分: {y.get('score', 'N/A')}\n"
+                history_text += f"诊断: {y.get('summary', '')}\n"
+                history_text += f"操作建议: {y.get('suggestions', '')}\n"
+
+    # ===== 构建 Prompt =====
     prompt = f"""
 你是顶级量化投资顾问，回答必须**直接、量化、明确信号**。不要输出推理过程，只输出结论。
 
@@ -250,6 +356,8 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 总资产：{total_text}
 {strategy_text}
 风险偏好：{INVESTMENT_STYLE}
+
+{history_text}
 
 ---
 
@@ -285,23 +393,26 @@ def analyze_with_deepseek(fund_data_list, portfolio):
 
 ## 三、可关注方向（最多1个）
 
-方向名称 + 基金代码
+**只推荐你当前未持有的基金。** 如果所有看好的方向都已持有，直接输出：暂无。
+
+方向名称 + 基金代码（场外基金，0或5开头）
 - 理由：一句话
 - 入场建议：现在买/等回调X%/分批建仓
 - 参考触发价：X.XX
 
-如果暂无合适方向，输出：暂无。
+【硬性约束】
+- 可关注方向必须是你当前**未持有**的基金
+- 如果已持有，请直接输出"暂无"
+- 禁止推荐场内ETF
 
 ---
 
-【硬性约束】
+【硬性要求】
 - 操作清单中的基金必须使用正确的基金代码
 - 操作必须是【买入/加仓/持有/减仓/卖出】中的一项
 - 每个操作必须有具体份额或比例
-- 禁止推荐场内ETF
 - 总字数控制在600字以内
 """
-    # ========================================================
 
     def make_request(api_key, url, model, payload):
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -330,24 +441,24 @@ def analyze_with_deepseek(fund_data_list, portfolio):
                 continue
 
             if resp.status_code != 200:
-                return f"⚠️ API错误 {resp.status_code}: {resp.text[:200]}"
+                return f"⚠️ API错误 {resp.status_code}: {resp.text[:200]}", None
 
             result = resp.json()
             content = result['choices'][0].get('message', {}).get('content', '')
             if not content or content.strip() == '':
-                return "⚠️ API返回空内容，请重试"
+                return "⚠️ API返回空内容，请重试", None
             print(f"✅ 分析成功，{len(content)}字符")
-            return content
+            return content, nav_record
 
         except requests.exceptions.Timeout:
             print(f"⏱️ 超时 (尝试 {attempt+1}/3)")
             if attempt == 2:
-                return "⚠️ 三次超时，请稍后重试"
+                return "⚠️ 三次超时，请稍后重试", None
             continue
         except Exception as e:
-            return f"⚠️ 分析失败: {e}"
+            return f"⚠️ 分析失败: {e}", None
 
-    return "⚠️ 未知错误"
+    return "⚠️ 未知错误", None
 
 def send_to_feishu(message):
     if not FEISHU_WEBHOOK:
@@ -363,7 +474,20 @@ def send_to_feishu(message):
         print(f"❌ 异常: {e}")
 
 if __name__ == "__main__":
+    ensure_history_dir()
+
+    # 交易日判断
+    if not is_trading_day():
+        print("📅 今日非交易日，跳过分析推送")
+        exit(0)
+
     load_portfolio()
+
+    # 加载历史数据
+    nav_history = load_nav_history(days=5)
+    analysis_history = load_analysis_history(days=3)
+    print(f"📚 加载了 {len(nav_history)} 天净值历史，{len(analysis_history)} 天分析摘要")
+
     print("🚀 开始获取基金数据...")
     print(f"📌 基金: {FUND_LIST}")
 
@@ -385,8 +509,9 @@ if __name__ == "__main__":
 
     print(f"📊 成功获取 {len(valid_data)} 只基金")
     print("🧠 调用分析模型...")
-    ai_analysis = analyze_with_deepseek(valid_data, PORTFOLIO)
+    ai_analysis, nav_record = analyze_with_deepseek(valid_data, PORTFOLIO, nav_history, analysis_history)
 
+    # 构建报告
     report = f"📈 **基金持仓日报 - {datetime.now().strftime('%Y-%m-%d')}**\n\n"
     total_value = 0
     for item in valid_data:
@@ -424,4 +549,24 @@ if __name__ == "__main__":
     report += f"**🤖 量化分析报告**\n{ai_analysis}"
 
     send_to_feishu(report)
+
+    # 保存历史记录
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    if nav_record:
+        save_nav_history(today_str, nav_record)
+        print(f"💾 已保存净值历史 ({len(nav_record)} 只基金)")
+
+    # 从 AI 分析中提取评分和摘要
+    score_match = re.search(r'\*\*综合评分\*\*[：:]\s*([\d.]+)', ai_analysis)
+    score = score_match.group(1) if score_match else "N/A"
+    summary_match = re.search(r'\*\*一句话诊断\*\*[：:]\s*(.+?)(?:\n|$)', ai_analysis)
+    summary = summary_match.group(1) if summary_match else ""
+    # 提取操作建议部分
+    suggestions = ""
+    suggestion_section = re.search(r'## 一、今日操作清单.*?\n(.*?)(?=\n##|\Z)', ai_analysis, re.DOTALL)
+    if suggestion_section:
+        suggestions = suggestion_section.group(1).strip()
+    save_analysis_history(today_str, score, summary, suggestions)
+    print(f"💾 已保存分析摘要 (评分: {score})")
+
     print("🎉 任务完成！")
